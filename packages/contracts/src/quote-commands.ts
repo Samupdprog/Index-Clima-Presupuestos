@@ -25,3 +25,5 @@ export const quoteCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("reorderQuoteTexts"), expectedRevision: common.expectedRevision, orderedTextIds: z.array(z.uuid()) }),
   z.object({ type: z.literal("archiveQuote"), expectedRevision: common.expectedRevision }),
 ]);
+
+export type QuoteCommand = z.infer<typeof quoteCommandSchema>;
