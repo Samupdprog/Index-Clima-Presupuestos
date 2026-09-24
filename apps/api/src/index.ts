@@ -1,7 +1,6 @@
 import { createHash, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { eq } from "drizzle-orm";
 import {
   archiveQuote,
   addLaborEntry,
@@ -44,7 +43,8 @@ import {
   createQuoteRepository,
   createQuoteWorkflowRepository,
   createCatalogRepository,
-  installations,
+  createInstallationRepository,
+  InstallationNotFoundError,
   QuoteNotFoundError,
   ReadOnlyQuoteError,
   RevisionConflictError,
@@ -61,6 +61,7 @@ const clients = database ? createClientRepository(database.db) : null;
 const quotes = database ? createQuoteRepository(database.db) : null;
 const quoteWorkflow = database ? createQuoteWorkflowRepository(database.db) as unknown as QuoteWorkflowRepository : null;
 const catalog = database ? createCatalogRepository(database.db) : null;
+const installationsRepo = database ? createInstallationRepository(database.db) : null;
 const DEFAULT_HOLD_HEALTH_INTERVAL_MINUTES = 5;
 let holdedHealthCheckPromise: Promise<HoldedHealthResult> | null = null;
 
@@ -79,7 +80,15 @@ function getHoldedSettingsConfig(value: unknown): Record<string, unknown> {
 }
 
 function deriveHoldedEncryptionKey() {
-  const material = process.env.HOLDED_ENCRYPTION_KEY ?? process.env.INTERNAL_SERVICE_TOKEN ?? process.env.DATABASE_URL ?? process.env.INSTALLATION_ID ?? "index-clima-local-dev";
+  // `||` + trim: una variable vacía ("") NO debe usarse como material (rompería
+  // el cifrado y sería débil). Orden: clave explícita → token de servicio →
+  // DATABASE_URL → INSTALLATION_ID → constante de desarrollo.
+  const material =
+    process.env.HOLDED_ENCRYPTION_KEY?.trim() ||
+    process.env.INTERNAL_SERVICE_TOKEN?.trim() ||
+    process.env.DATABASE_URL?.trim() ||
+    process.env.INSTALLATION_ID?.trim() ||
+    "index-clima-local-dev";
   return createHash("sha256").update(material).digest();
 }
 
@@ -103,14 +112,18 @@ function decryptHoldedSecret(serialized: string) {
 }
 
 async function readInstallationConfig(): Promise<Record<string, unknown>> {
-  if (!database || !installationId) return {};
-  const [row] = await database.db.select({ config: installations.config }).from(installations).where(eq(installations.id, installationId)).limit(1);
-  return (row?.config as Record<string, unknown>) ?? {};
+  if (!installationsRepo || !installationId) return {};
+  return installationsRepo.getConfig(installationId);
 }
 
+/**
+ * Persiste la config de la installation. Lanza `InstallationNotFoundError` si
+ * no existe la fila (INSTALLATION_ID sin instalación): así un "guardar" nunca
+ * parece correcto cuando en realidad no persistió nada.
+ */
 async function writeInstallationConfig(nextConfig: Record<string, unknown>) {
-  if (!database || !installationId) return;
-  await database.db.update(installations).set({ config: nextConfig, updatedAt: new Date() }).where(eq(installations.id, installationId));
+  if (!installationsRepo || !installationId) return;
+  await installationsRepo.writeConfig(installationId, nextConfig);
 }
 
 async function getHoldedSettingsFromDatabase() {
@@ -130,16 +143,32 @@ function getConfiguredHoldedApiKey(config: Record<string, unknown>) {
 
 async function persistHoldedHealth(result: HoldedHealthResult) {
   if (!database || !installationId) return result;
-  const config = await readInstallationConfig();
-  const holded = getHoldedSettingsConfig(config);
-  const nextConfig = { ...config, holded: { ...holded, health: result, checkIntervalMinutes: normalizeCheckIntervalMinutes(holded.checkIntervalMinutes ?? process.env.HOLDED_HEALTH_CHECK_INTERVAL_MINUTES ?? DEFAULT_HOLD_HEALTH_INTERVAL_MINUTES) } };
-  await writeInstallationConfig(nextConfig);
+  try {
+    const config = await readInstallationConfig();
+    const holded = getHoldedSettingsConfig(config);
+    const nextConfig = { ...config, holded: { ...holded, health: result, checkIntervalMinutes: normalizeCheckIntervalMinutes(holded.checkIntervalMinutes ?? process.env.HOLDED_HEALTH_CHECK_INTERVAL_MINUTES ?? DEFAULT_HOLD_HEALTH_INTERVAL_MINUTES) } };
+    await writeInstallationConfig(nextConfig);
+  } catch (error) {
+    // El health no debe romperse por persistencia; el estado en vivo se devuelve igual.
+    if (!(error instanceof InstallationNotFoundError)) throw error;
+  }
   return result;
 }
+
+const INSTALLATION_MISSING_HEALTH: HoldedHealthResult = {
+  status: "unknown",
+  code: "not_configured",
+  message: "No existe la instalación configurada (INSTALLATION_ID). Ejecuta la inicialización de la base de datos.",
+  lastCheckedAt: null,
+};
 
 async function runHoldedHealthCheck(force = false): Promise<HoldedHealthResult> {
   if (!database || !installationId) {
     return { status: "unknown", code: "not_configured", message: "Holded no está configurado en este servicio.", lastCheckedAt: null };
+  }
+  // Si falta la installation, no intentamos escribir (evita 500 al cargar ajustes).
+  if (installationsRepo && !(await installationsRepo.exists(installationId))) {
+    return INSTALLATION_MISSING_HEALTH;
   }
 
   const config = await readInstallationConfig();
@@ -177,7 +206,7 @@ async function runHoldedHealthCheck(force = false): Promise<HoldedHealthResult> 
       return result;
     }
 
-    const result = await createHoldedClient({ apiKey: resolvedKey }).checkHealth();
+    const result = await newHoldedClient(resolvedKey).checkHealth();
     await persistHoldedHealth(result);
     return result;
   })();
@@ -189,13 +218,13 @@ async function runHoldedHealthCheck(force = false): Promise<HoldedHealthResult> 
   }
 }
 
-async function buildHoldedSettingsPayload() {
+async function buildHoldedSettingsPayload(forceHealth = false) {
   const config = await readInstallationConfig();
   const holded = getHoldedSettingsConfig(config);
   const featureEnabled = process.env.FEATURE_HOLDED === "true";
   const resolvedKey = getConfiguredHoldedApiKey(config);
   const intervalMinutes = normalizeCheckIntervalMinutes(holded.checkIntervalMinutes ?? process.env.HOLDED_HEALTH_CHECK_INTERVAL_MINUTES ?? DEFAULT_HOLD_HEALTH_INTERVAL_MINUTES);
-  const health = await runHoldedHealthCheck(false);
+  const health = await runHoldedHealthCheck(forceHealth);
 
   return {
     featureEnabled,
@@ -212,11 +241,15 @@ async function updateHoldedSettings(payload: Record<string, unknown>) {
   const holded = getHoldedSettingsConfig(currentConfig);
   const nextHolded = { ...holded };
 
-  const incomingKey = payload.apiKey;
-  if (typeof incomingKey === "string") {
-    const trimmed = incomingKey.trim();
-    if (trimmed.length > 0) nextHolded.apiKeyEncrypted = encryptHoldedSecret(trimmed);
-    else delete nextHolded.apiKeyEncrypted;
+  // Desconexión EXPLÍCITA: sólo con removeApiKey === true se borra la clave.
+  if (payload.removeApiKey === true) {
+    delete nextHolded.apiKeyEncrypted;
+  } else {
+    const incomingKey = payload.apiKey;
+    // Un campo vacío NO borra la clave (evita perderla al cambiar solo el intervalo).
+    if (typeof incomingKey === "string" && incomingKey.trim().length > 0) {
+      nextHolded.apiKeyEncrypted = encryptHoldedSecret(incomingKey.trim());
+    }
   }
 
   if (payload.checkIntervalMinutes !== undefined) {
@@ -226,19 +259,30 @@ async function updateHoldedSettings(payload: Record<string, unknown>) {
   const nextConfig = { ...currentConfig, holded: nextHolded };
   await writeInstallationConfig(nextConfig);
 
-  return buildHoldedSettingsPayload();
+  // Comprobación inmediata tras guardar (no esperar al intervalo).
+  return buildHoldedSettingsPayload(true);
 }
 
 /**
  * Construye el gateway de contactos de Holded si la integración está activa y
  * hay clave configurada; en caso contrario devuelve null (modo degradado).
  */
+/** Log seguro de operaciones Holded: metadatos, nunca clave/cabeceras/cuerpos. */
+function holdedLogger(event: { method: string; path: string; status: number | null; code?: string; ok: boolean; durationMs: number }) {
+  const line = { level: event.ok ? "info" : "warn", msg: "holded_request", method: event.method, path: event.path, status: event.status, code: event.code, ms: event.durationMs };
+  console[event.ok ? "log" : "warn"](JSON.stringify(line));
+}
+
+function newHoldedClient(apiKey: string) {
+  return createHoldedClient({ apiKey, logger: holdedLogger });
+}
+
 async function buildHoldedGateway(): Promise<HoldedContactGateway | null> {
   const config = await readInstallationConfig();
   const featureEnabled = process.env.FEATURE_HOLDED === "true";
   const resolvedKey = getConfiguredHoldedApiKey(config);
   if (!featureEnabled || !resolvedKey) return null;
-  return createHoldedContactGateway(createHoldedClient({ apiKey: resolvedKey }));
+  return createHoldedContactGateway(newHoldedClient(resolvedKey));
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
@@ -266,6 +310,7 @@ function requireContext(res: ServerResponse) {
 }
 
 function mapError(res: ServerResponse, error: unknown) {
+  if (error instanceof InstallationNotFoundError) return sendJson(res, 503, { error: "installation_not_found", message: "No existe la instalación configurada (INSTALLATION_ID). Ejecuta la inicialización de la base de datos (db:seed)." });
   if (error instanceof RevisionConflictError) return sendJson(res, 409, { error: "revision_conflict" });
   if (error instanceof QuoteNotFoundError) return sendJson(res, 404, { error: "quote_not_found" });
   if (error instanceof ReadOnlyQuoteError) return sendJson(res, 422, { error: "quote_read_only" });
@@ -414,7 +459,7 @@ const server = createServer(async (req, res) => {
       if (quote.accessMode === "read_only" || quote.status === "archived") return sendJson(res, 422, { error: "quote_read_only" });
       const holdedInput = buildHoldedEstimate(quote);
       if (!holdedInput) return sendJson(res, 422, { error: "quote_not_calculated" });
-      const result = await createHoldedClient({ apiKey: resolvedKey }).saveEstimate(holdedInput);
+      const result = await newHoldedClient(resolvedKey).saveEstimate(holdedInput);
       await updateQuote(quotes!)({ installationId: installationId!, id: quote.id, expectedRevision: quote.revision, status: "finalized", holdedEstimateId: result.id });
       return sendJson(res, 200, await getQuote(quotes!)(installationId!, quote.id));
     }

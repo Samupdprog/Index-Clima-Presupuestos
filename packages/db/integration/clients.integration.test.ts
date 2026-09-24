@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { upsertHoldedContact, hashHoldedSnapshot, type HoldedClientContact } from "@quotes/application";
+import { createInstallationRepository, InstallationNotFoundError } from "../src/index.js";
 import {
   clients,
   createClientRepository,
@@ -89,6 +90,39 @@ describe("clients repository integration", () => {
     const unchanged = await repository.getById(installationId, clientId);
     expect(unchanged?.phone).toBe("+34900111222");
     expect(unchanged?.revision).toBe(updated.revision);
+  });
+});
+
+describe("installation config integration", () => {
+  const installationId = randomUUID();
+  const { db, pool } = createDb(databaseUrl);
+  const repo = createInstallationRepository(db);
+
+  afterAll(async () => {
+    await db.delete(installations).where(eq(installations.id, installationId));
+    await pool.end();
+  });
+
+  it("ensures an installation idempotently by fixed id", async () => {
+    const first = await repo.ensure({ id: installationId, slug: `cfg-${installationId}`, displayName: "Cfg" });
+    expect(first.id).toBe(installationId);
+    const second = await repo.ensure({ id: installationId, slug: `cfg-${installationId}`, displayName: "Cfg 2" });
+    expect(second.id).toBe(installationId); // sin duplicar
+  });
+
+  it("persists and reads back config (survives re-read)", async () => {
+    await repo.writeConfig(installationId, { holded: { apiKeyEncrypted: "enc-abc", checkIntervalMinutes: 10 } });
+    const config = await repo.getConfig(installationId);
+    expect((config.holded as Record<string, unknown>).apiKeyEncrypted).toBe("enc-abc");
+  });
+
+  it("throws InstallationNotFoundError on a zero-row update (no silent save)", async () => {
+    await expect(repo.writeConfig(randomUUID(), { holded: {} })).rejects.toBeInstanceOf(InstallationNotFoundError);
+  });
+
+  it("exists() reflects presence", async () => {
+    expect(await repo.exists(installationId)).toBe(true);
+    expect(await repo.exists(randomUUID())).toBe(false);
   });
 });
 

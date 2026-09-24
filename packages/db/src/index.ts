@@ -4,6 +4,7 @@ export * from "./schema/operations.js";
 export * from "./client.js";
 export * from "./errors.js";
 export * from "./repositories/clients.js";
+export * from "./repositories/installations.js";
 export * from "./repositories/quotes.js";
 export * from "./repositories/quote-workflow.js";
 export * from "./repositories/catalogs.js";
