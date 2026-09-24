@@ -1,5 +1,6 @@
 export * from "./ports/clients.js";
 export * from "./commands/clients.js";
+export * from "./commands/client-sync.js";
 export * from "./queries/clients.js";
 export * from "./ports/quotes.js";
 export * from "./commands/quotes.js";
