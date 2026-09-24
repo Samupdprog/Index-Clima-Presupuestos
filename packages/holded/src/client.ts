@@ -16,12 +16,24 @@ const DEFAULT_BASE_URL = "https://api.holded.com/api/v2";
 const LEGACY_INVOICING_V1_BASE_URL = "https://api.holded.com/api/invoicing/v1";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+export interface HoldedLogEvent {
+  method: string;
+  /** Ruta lógica sin query (nunca incluye la API key ni cabeceras). */
+  path: string;
+  status: number | null;
+  code?: string;
+  ok: boolean;
+  durationMs: number;
+}
+
 export interface HoldedClientOptions {
   apiKey: string;
   /** Permite apuntar a otro entorno o sandbox sin tocar el resto del código. */
   baseUrl?: string;
   fetch?: Fetch;
   timeoutMs?: number;
+  /** Hook de observabilidad. Recibe metadatos seguros, jamás secretos. */
+  logger?: (event: HoldedLogEvent) => void;
 }
 
 const INVALID_JSON = Symbol("invalid_json");
@@ -45,11 +57,17 @@ function extractId(body: unknown): string | null {
   return null;
 }
 
+/**
+ * Normaliza la respuesta de listados de Holded v2. El contrato canónico es
+ * `{ items, cursor, has_more }`; se toleran, por compatibilidad defensiva, un
+ * array directo o `{ data }`.
+ */
 function normalizeContactList(body: HoldedContactListResponse | unknown): HoldedContact[] {
   if (Array.isArray(body)) return body as HoldedContact[];
   if (body && typeof body === "object") {
-    const data = (body as { data?: unknown }).data;
-    if (Array.isArray(data)) return data as HoldedContact[];
+    const record = body as Record<string, unknown>;
+    if (Array.isArray(record.items)) return record.items as HoldedContact[];
+    if (Array.isArray(record.data)) return record.data as HoldedContact[];
   }
   return [];
 }
@@ -59,6 +77,13 @@ export function createHoldedClient(options: HoldedClientOptions) {
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   const fetcher = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const logger = options.logger;
+
+  function log(event: HoldedLogEvent) {
+    if (logger) {
+      try { logger(event); } catch { /* la observabilidad nunca rompe la operación */ }
+    }
+  }
 
   /**
    * Única capa HTTP hacia Holded. Centraliza auth Bearer, cabeceras, timeout,
@@ -73,6 +98,8 @@ export function createHoldedClient(options: HoldedClientOptions) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const hasBody = body !== undefined;
+    const startedAt = Date.now();
+    const pathForLog = path.split("?")[0] ?? path; // sin query (nunca secretos)
     let response: Response;
     try {
       response = await fetcher(`${opts?.baseUrl ?? baseUrl}${path}`, {
@@ -87,10 +114,9 @@ export function createHoldedClient(options: HoldedClientOptions) {
         signal: controller.signal,
       });
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new HoldedApiError("timeout");
-      }
-      throw new HoldedApiError("network_error");
+      const code = error instanceof Error && error.name === "AbortError" ? "timeout" : "network_error";
+      log({ method, path: pathForLog, status: null, code, ok: false, durationMs: Date.now() - startedAt });
+      throw new HoldedApiError(code);
     } finally {
       clearTimeout(timer);
     }
@@ -99,21 +125,39 @@ export function createHoldedClient(options: HoldedClientOptions) {
     const parsed = raw ? parseJson(raw) : null;
 
     if (!response.ok) {
+      const code = mapStatusToErrorCode(response.status);
+      log({ method, path: pathForLog, status: response.status, code, ok: false, durationMs: Date.now() - startedAt });
       const errorBody = parsed === INVALID_JSON ? undefined : parsed;
-      throw new HoldedApiError(mapStatusToErrorCode(response.status), response.status, errorBody);
+      throw new HoldedApiError(code, response.status, errorBody);
     }
     if (parsed === INVALID_JSON) {
+      log({ method, path: pathForLog, status: response.status, code: "invalid_response", ok: false, durationMs: Date.now() - startedAt });
       throw new HoldedApiError("invalid_response", response.status);
     }
+    log({ method, path: pathForLog, status: response.status, ok: true, durationMs: Date.now() - startedAt });
     return (parsed ?? null) as T;
   }
 
   const client = {
-    async listContacts(params: { page?: number } = {}): Promise<HoldedContact[]> {
+    // v2 pagina por cursor (`cursor` + `has_more`), no por número de página.
+    async listContacts(params: { cursor?: string } = {}): Promise<HoldedContact[]> {
       const search = new URLSearchParams();
-      if (params.page) search.set("page", String(params.page));
+      if (params.cursor) search.set("cursor", params.cursor);
       const suffix = search.toString() ? `?${search.toString()}` : "";
       return normalizeContactList(await request<HoldedContactListResponse>("GET", `/contacts${suffix}`));
+    },
+
+    /** Página cruda con cursor, por si se necesita paginar en el futuro. */
+    async listContactsPage(params: { cursor?: string } = {}): Promise<HoldedContactListResponse> {
+      const search = new URLSearchParams();
+      if (params.cursor) search.set("cursor", params.cursor);
+      const suffix = search.toString() ? `?${search.toString()}` : "";
+      const body = await request<HoldedContactListResponse>("GET", `/contacts${suffix}`);
+      return {
+        items: normalizeContactList(body),
+        cursor: (body as HoldedContactListResponse)?.cursor ?? null,
+        has_more: Boolean((body as HoldedContactListResponse)?.has_more),
+      };
     },
 
     async searchContacts(query: string): Promise<HoldedContact[]> {
@@ -151,13 +195,14 @@ export function createHoldedClient(options: HoldedClientOptions) {
     async checkHealth(): Promise<HoldedHealthResult> {
       const checkedAt = new Date().toISOString();
       try {
-        await request<HoldedContactListResponse>("GET", "/contacts?page=1");
+        // Operación representativa: leer contactos v2 (lo que realmente usamos).
+        await request<HoldedContactListResponse>("GET", "/contacts");
         return { status: "healthy", code: "ok", message: "Holded responde correctamente.", lastCheckedAt: checkedAt };
       } catch (error) {
         if (error instanceof HoldedApiError) {
           const map: Partial<Record<string, HoldedHealthCode>> = {
             unauthorized: "invalid_api_key",
-            forbidden: "invalid_api_key",
+            forbidden: "insufficient_permissions",
             rate_limited: "rate_limit",
             network_error: "network_error",
             timeout: "network_error",
@@ -166,6 +211,7 @@ export function createHoldedClient(options: HoldedClientOptions) {
           const messages: Record<HoldedHealthCode, string> = {
             ok: "Holded responde correctamente.",
             invalid_api_key: "La clave de Holded no es válida.",
+            insufficient_permissions: "La API key no tiene permisos suficientes para consultar contactos.",
             rate_limit: "Holded está limitando las peticiones.",
             network_error: "No se pudo contactar con Holded.",
             unexpected_error: "Holded respondió con un error inesperado.",

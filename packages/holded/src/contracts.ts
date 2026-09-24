@@ -1,44 +1,49 @@
-// Contratos explícitos para los datos de Holded v2 que Index Clima utiliza.
-// No modelamos el objeto completo de Holded: conservamos los campos que
-// controlamos y preservamos el resto mediante el índice `[key: string]`.
+// Contratos de Holded API v2 (verificados contra la API real: envelope
+// { items, cursor, has_more } y campos snake_case). Sólo tipamos lo que
+// leemos/escribimos; el resto se conserva vía el índice `[key: string]`
+// (imprescindible porque el PUT v2 es un reemplazo completo).
 
 export interface HoldedBillAddress {
-  address?: string;
-  city?: string;
-  postalCode?: string;
-  province?: string;
-  country?: string;
-  countryCode?: string;
-  info?: string;
+  address?: string | null;
+  city?: string | null;
+  postal_code?: string | null;
+  province?: string | null;
+  country?: string | null;
+  country_code?: string | null;
+  info?: string | null;
   [key: string]: unknown;
 }
 
-/**
- * Contacto de Holded. Sólo tipamos los campos que leemos/escribimos; el resto
- * se conserva intacto (importante porque el PUT v2 es un reemplazo completo).
- */
+/** Contacto de Holded v2 (snake_case). */
 export interface HoldedContact {
   id: string;
   name?: string;
-  /** NIF / CIF en Holded. */
-  code?: string;
-  email?: string;
-  phone?: string;
-  mobile?: string;
+  /** Código de contacto: en cuentas ES es el NIF/CIF (suele estar poblado). */
+  code?: string | null;
+  /** VAT intracomunitario; a menudo null en clientes nacionales. */
+  vat_number?: string | null;
+  trade_name?: string | null;
+  is_person?: boolean;
+  email?: string | null;
+  mobile?: string | null;
+  phone?: string | null;
   /** client | supplier | lead | debtor | creditor */
   type?: string;
-  billAddress?: HoldedBillAddress;
+  bill_address?: HoldedBillAddress;
+  updated_at?: string | null;
   [key: string]: unknown;
 }
 
-/** El listado v2 puede venir como array o envuelto en `{ data, total }`. */
-export type HoldedContactListResponse =
-  | HoldedContact[]
-  | { data?: HoldedContact[]; total?: number; page?: number };
+/** Envelope oficial de los listados v2. */
+export interface HoldedContactListResponse {
+  items: HoldedContact[];
+  cursor: string | null;
+  has_more: boolean;
+}
 
 export type HoldedContactSearchResponse = HoldedContactListResponse;
 
-/** Cuerpo para crear un contacto (POST /api/v2/contacts). */
+/** Cuerpo para crear un contacto (POST /api/v2/contacts), snake_case. */
 export interface HoldedCreateContactInput {
   name: string;
   code?: string;
@@ -46,17 +51,16 @@ export interface HoldedCreateContactInput {
   phone?: string;
   mobile?: string;
   type?: string;
-  billAddress?: HoldedBillAddress;
+  bill_address?: HoldedBillAddress;
 }
 
 /**
- * Cuerpo para actualizar un contacto (PUT /api/v2/contacts/{id}).
- * En v2 el PUT es reemplazo completo, así que este objeto debe partir del
- * contacto remoto existente (ver `mergeLocalChangesIntoHoldedContact`).
+ * Cuerpo del PUT (reemplazo completo): debe partir del contacto remoto
+ * existente (ver `mergeLocalChangesIntoHoldedContact`).
  */
 export type HoldedUpdateContactInput = Record<string, unknown>;
 
-/** Resultado normalizado de create/update (Holded devuelve formas distintas). */
+/** Resultado normalizado de create/update. */
 export interface HoldedContactMutationResult {
   id: string;
   raw: unknown;
@@ -66,6 +70,7 @@ export type HoldedHealthStatus = "unknown" | "checking" | "healthy" | "unhealthy
 export type HoldedHealthCode =
   | "ok"
   | "invalid_api_key"
+  | "insufficient_permissions"
   | "network_error"
   | "rate_limit"
   | "unexpected_error"

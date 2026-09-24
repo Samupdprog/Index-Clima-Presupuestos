@@ -31,12 +31,21 @@ function trimmedOrNull(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+// Decisiones de mapeo Holded v2 ↔ local (documentadas en SPEC-001):
+//   taxId   ← code (NIF/CIF en cuentas ES) y, si vacío, vat_number.
+//             Al escribir → `code` (compatible con v1 y con el dato real).
+//   phone   ← phone y, si vacío, mobile. Al escribir → `phone` (se conserva
+//             `mobile` intacto).
+//   address ← bill_address.address (1:1, línea de dirección). Ciudad/CP/
+//             provincia/país se conservan en Holded pero no se editan aquí,
+//             para no corromper la dirección estructurada en el PUT completo.
+
 /** Holded → cliente local (para snapshot y refresco). */
 export function holdedContactToLocalClient(contact: HoldedContact): LocalClientFields {
-  const bill = contact.billAddress ?? {};
+  const bill = contact.bill_address ?? {};
   return {
     name: trimmedOrNull(contact.name) ?? "",
-    taxId: trimmedOrNull(contact.code),
+    taxId: trimmedOrNull(contact.code) ?? trimmedOrNull(contact.vat_number),
     email: trimmedOrNull(contact.email),
     phone: trimmedOrNull(contact.phone) ?? trimmedOrNull(contact.mobile),
     address: trimmedOrNull(bill.address),
@@ -53,7 +62,7 @@ export function localClientToHoldedCreate(client: LocalClientLike): HoldedCreate
   if (code) input.code = code;
   if (email) input.email = email;
   if (phone) input.phone = phone;
-  if (address) input.billAddress = { address };
+  if (address) input.bill_address = { address };
   return input;
 }
 
@@ -62,14 +71,13 @@ export function localClientToHoldedCreate(client: LocalClientLike): HoldedCreate
  * objeto completo listo para el PUT (reemplazo total en v2).
  *
  * Sólo se sobrescriben los campos que Index Clima controla; el resto del
- * contacto (tipo, iban, tags, personas de contacto, notas, etc.) se conserva.
- * En particular NO cambiamos `type`, para no convertir un proveedor en cliente.
+ * contacto (vat_number, mobile, iban, tags, contact_persons, notes, defaults,
+ * etc.) se conserva. NO cambiamos `type` (un proveedor no se vuelve cliente).
  */
 export function mergeLocalChangesIntoHoldedContact(
   existing: HoldedContact,
   changes: Partial<LocalClientFields>,
 ): HoldedUpdateContactInput {
-  // Copia profunda superficial preservando todos los campos desconocidos.
   const merged: Record<string, unknown> = { ...existing };
   // `id` va en la URL, no en el cuerpo.
   delete merged.id;
@@ -80,9 +88,9 @@ export function mergeLocalChangesIntoHoldedContact(
   if (changes.phone !== undefined) merged.phone = changes.phone ?? "";
 
   if (changes.address !== undefined) {
-    const existingBill = (existing.billAddress ?? {}) as HoldedBillAddress;
+    const existingBill = (existing.bill_address ?? {}) as HoldedBillAddress;
     // Preservamos ciudad/CP/provincia/país que Index Clima no gestiona.
-    merged.billAddress = { ...existingBill, address: changes.address ?? "" };
+    merged.bill_address = { ...existingBill, address: changes.address ?? "" };
   }
 
   return merged;
