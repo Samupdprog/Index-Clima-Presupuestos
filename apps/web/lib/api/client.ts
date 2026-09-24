@@ -36,6 +36,19 @@ function query(path: string, params: Record<string, string | undefined>) {
   return `${path}?${search}`;
 }
 
+export interface HoldedSettingsResponse {
+  featureEnabled: boolean;
+  isConfigured: boolean;
+  keyMasked: string | null;
+  checkIntervalMinutes: number;
+  health: {
+    status: "unknown" | "checking" | "healthy" | "unhealthy";
+    code: "ok" | "invalid_api_key" | "network_error" | "rate_limit" | "unexpected_error" | "not_configured" | "unknown";
+    message: string | null;
+    lastCheckedAt: string | null;
+  };
+}
+
 export const api = {
   searchQuotes: (q = "") => request<QuoteRecord[]>(query("/quotes", { q })),
   getQuote: (id: string) => request<QuoteRecord>(`/quotes/${id}`),
@@ -48,6 +61,10 @@ export const api = {
   searchClients: (q = "") => request<ClientRecord[]>(query("/clients", { q })),
   createClient: (data: CreateClientRequest) => request<ClientRecord>("/clients", { method: "POST", body: JSON.stringify(data) }),
   updateClient: (id: string, data: UpdateClientRequest) => request<ClientRecord>(`/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  getHoldedSettings: () => request<HoldedSettingsResponse>("/holded/settings"),
+  updateHoldedSettings: (data: { apiKey?: string; checkIntervalMinutes?: number }) => request<HoldedSettingsResponse>("/holded/settings", { method: "PATCH", body: JSON.stringify(data) }),
+  checkHoldedHealth: () => request<HoldedSettingsResponse["health"]>("/holded/health", { method: "POST", body: JSON.stringify({}) }),
 
   getCatalog: <T extends CatalogRecord>(kind: CatalogKind) => request<T[]>(`/catalogs/${kind}`),
   createCatalog: <T extends CatalogRecord>(kind: CatalogKind, data: Record<string, unknown>) => request<T>(`/catalogs/${kind}`, { method: "POST", body: JSON.stringify(data) }),

@@ -55,11 +55,14 @@ El servicio es one-shot, no publica puertos y espera a que PostgreSQL esté heal
 ## Activar la exportación a Holded
 
 La acción “Guardar e importar en Holded” se ejecuta desde la API para que la
-credencial nunca llegue al navegador. Configura en `.env`:
+credencial nunca llegue al navegador. Para el primer arranque configura en
+`.env`:
 
 ```bash
 FEATURE_HOLDED=true
 HOLDED_API_KEY=tu_clave_privada
+HOLDED_ENCRYPTION_KEY=un_secreto_estable_y_largo
+HOLDED_HEALTH_CHECK_INTERVAL_MINUTES=5
 ```
 
 Después recrea al menos el servicio API:
@@ -70,6 +73,13 @@ docker compose up -d --build api
 
 Con `FEATURE_HOLDED=false` o sin clave, la interfaz conserva el presupuesto sin
 cambiar su estado y muestra que la integración no está configurada.
+
+Una vez iniciada la aplicación, la clave también puede guardarse desde
+`Configuración`. La API la cifra en `installations.config`, devuelve únicamente
+una máscara y usa la configuración persistida antes que `HOLDED_API_KEY`. No
+cambies `HOLDED_ENCRYPTION_KEY` después de guardar claves: hacerlo impide
+descifrarlas. El intervalo de salud se puede ajustar desde la misma pantalla y
+por defecto es de cinco minutos.
 
 Crear o actualizar la instalación configurada en `INSTALLATION_SLUG`:
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { DropdownMenu } from "radix-ui";
+import { ReviewDocument } from "./review-document";
 import { AnimatePresence, motion, Reorder, useDragControls, useReducedMotion } from "motion/react";
 import {
   AlertTriangle,
@@ -592,14 +593,6 @@ function AddTextDialog({ open, onOpenChange, quote, templates, execute }: { open
   function choose(id: string) { setTemplateId(id); const template = templates.find((item) => item.id === id); if (template) { setTitle(template.title); setBody(template.body); } }
   async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); try { await execute({ type: "addQuoteText", expectedRevision: quote.revision, title, body }, "Texto añadido"); onOpenChange(false); } finally { setBusy(false); } }
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent title="Añadir texto" description="Parte de una plantilla o escribe un bloque exclusivo para este presupuesto." footer={<><DialogClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></DialogClose><RippleButton type="submit" form="add-text-form" disabled={busy || !body.trim()}>{busy ? "Añadiendo…" : "Añadir texto"}</RippleButton></>}><form id="add-text-form" onSubmit={submit} className="form-grid"><div className="field span-2"><label className="field-label" htmlFor="quote-text-template">Plantilla (opcional)</label><SearchableSelect id="quote-text-template" value={templateId} onChange={choose} placeholder="Buscar una plantilla…" clearLabel="Escribir texto libre" options={templates.filter((item) => item.active).map((item) => ({ value: item.id, label: item.title, description: item.body.slice(0, 90) }))} /></div><div className="field span-2"><label className="field-label" htmlFor="quote-text-title">Título</label><input id="quote-text-title" className="input" value={title} onChange={(event) => setTitle(event.target.value)} /></div><div className="field span-2"><label className="field-label" htmlFor="quote-text-body">Contenido</label><textarea id="quote-text-body" className="textarea" value={body} onChange={(event) => setBody(event.target.value)} required /></div></form></DialogContent></Dialog>;
-}
-
-function ReviewDocument({ quote, calculations }: { quote: QuoteRecord; calculations: Map<string, CalculatedLine> }) {
-  return <div className="review-document"><div className="review-brand"><strong>Index Clima</strong><span>PRESUPUESTO</span></div><div className="review-meta"><div><h4>Cliente</h4><p><strong>{quote.clientSnapshot?.name ?? "Cliente"}</strong></p>{quote.clientSnapshot?.taxId ? <p>{quote.clientSnapshot.taxId}</p> : null}{quote.clientSnapshot?.address ? <p>{quote.clientSnapshot.address}</p> : null}</div><div><h4>Presupuesto</h4><p><strong>{quote.reference}</strong></p><p>{quote.title}</p></div></div>
-      <table className="review-table"><thead><tr><th>Concepto</th><th>Cantidad</th><th>Precio</th><th>Total</th></tr></thead><tbody>{quote.lines.filter((line) => !["title", "adjustment"].includes(line.type)).map((line) => { const calc = calculations.get(line.id); return <tr key={line.id}><td>{line.description}</td><td className="money">{line.type === "labor" ? "1" : `${formatNumber(line.quantity)} ${line.unit}`}</td><td className="money">{line.type === "labor" ? "—" : formatMoney(line.saleRuleValue)}</td><td className="money"><strong>{formatMoney(calc?.sale)}</strong></td></tr>; })}</tbody></table>
-      <div className="review-total"><div><span>Base imponible</span><strong>{formatMoney(quote.calculation?.saleWithoutTax)}</strong></div><div><span>IGIC</span><strong>{formatMoney(quote.calculation?.taxTotal)}</strong></div><div className="grand"><span>Total</span><strong>{formatMoney(quote.calculation?.saleWithTax)}</strong></div></div>
-      {quote.texts?.map((text) => <div className="review-text" key={text.id}><h3>{text.title}</h3><p>{text.body}</p></div>)}
-    </div>;
 }
 
 async function reorderTexts(quote: QuoteRecord, textId: string, direction: -1 | 1, execute: Execute) {

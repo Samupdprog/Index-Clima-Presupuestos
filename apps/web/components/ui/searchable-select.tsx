@@ -21,6 +21,7 @@ export function SearchableSelect({
   required = false,
   allowClear = true,
   clearLabel = "Quitar selección",
+  onOpen,
 }: {
   id?: string;
   value: string;
@@ -32,6 +33,7 @@ export function SearchableSelect({
   required?: boolean;
   allowClear?: boolean;
   clearLabel?: string;
+  onOpen?: () => void | Promise<void>;
 }) {
   const generatedId = useId();
   const inputId = id ?? `combobox-${generatedId}`;
@@ -41,6 +43,14 @@ export function SearchableSelect({
   const [query, setQuery] = useState(selected?.label ?? "");
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const refreshPromise = useRef<Promise<void> | null>(null);
+
+  function openMenu() {
+    setOpen(true);
+    if (!onOpen || refreshPromise.current) return;
+    const pending = Promise.resolve(onOpen()).finally(() => { refreshPromise.current = null; });
+    refreshPromise.current = pending;
+  }
 
   useEffect(() => {
     if (!open) setQuery(selected?.label ?? "");
@@ -63,9 +73,9 @@ export function SearchableSelect({
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
-      event.preventDefault(); setOpen(true); setActiveIndex((current) => Math.min(current + 1, Math.max(filtered.length - 1, 0)));
+      event.preventDefault(); openMenu(); setActiveIndex((current) => Math.min(current + 1, Math.max(filtered.length - 1, 0)));
     } else if (event.key === "ArrowUp") {
-      event.preventDefault(); setOpen(true); setActiveIndex((current) => Math.max(current - 1, 0));
+      event.preventDefault(); openMenu(); setActiveIndex((current) => Math.max(current - 1, 0));
     } else if (event.key === "Enter" && open && filtered[activeIndex]) {
       event.preventDefault(); choose(filtered[activeIndex]!);
     } else if (event.key === "Escape") {
@@ -89,12 +99,12 @@ export function SearchableSelect({
         placeholder={placeholder}
         disabled={disabled}
         required={required && !value}
-        onFocus={(event) => { setOpen(true); event.currentTarget.select(); }}
+        onFocus={(event) => { openMenu(); event.currentTarget.select(); }}
         onBlur={() => window.setTimeout(() => { setOpen(false); setQuery(selected?.label ?? ""); }, 120)}
         onChange={(event) => { setQuery(event.target.value); setOpen(true); if (!event.target.value && value) onChange(""); }}
         onKeyDown={handleKeyDown}
       />
-      {allowClear && value && !disabled ? <button type="button" className="combobox-clear" aria-label={clearLabel} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(""); setQuery(""); setOpen(true); inputRef.current?.focus(); }}><X /></button> : <ChevronDown className="combobox-chevron" aria-hidden="true" />}
+      {allowClear && value && !disabled ? <button type="button" className="combobox-clear" aria-label={clearLabel} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(""); setQuery(""); openMenu(); inputRef.current?.focus(); }}><X /></button> : <ChevronDown className="combobox-chevron" aria-hidden="true" />}
       {open ? (
         <div id={listId} className="combobox-menu" role="listbox">
           {filtered.length ? filtered.map((option, index) => (

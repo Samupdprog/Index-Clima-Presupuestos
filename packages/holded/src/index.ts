@@ -26,6 +26,23 @@ export class HoldedApiError extends Error {
   }
 }
 
+export type HoldedHealthStatus = "unknown" | "checking" | "healthy" | "unhealthy";
+export type HoldedHealthCode = "ok" | "invalid_api_key" | "network_error" | "rate_limit" | "unexpected_error" | "not_configured" | "unknown";
+
+export interface HoldedHealthResult {
+  status: HoldedHealthStatus;
+  code: HoldedHealthCode;
+  message: string;
+  lastCheckedAt: string | null;
+}
+
+export function maskApiKey(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= 4) return `${"•".repeat(Math.max(trimmed.length, 4))}`;
+  return `••••••••••••${trimmed.slice(-4)}`;
+}
+
 type Fetch = typeof fetch;
 
 export function createHoldedClient(apiKey: string, fetcher: Fetch = fetch) {
@@ -59,6 +76,28 @@ export function createHoldedClient(apiKey: string, fetcher: Fetch = fetch) {
       const id = extractDocumentId(body);
       if (!id) throw new HoldedApiError(response.status, body);
       return { id, response: body };
+    },
+
+    async checkHealth(): Promise<HoldedHealthResult> {
+      const checkedAt = new Date().toISOString();
+      try {
+        const response = await fetcher(`${baseUrl}/contacts?limit=1`, {
+          method: "GET",
+          headers: { "content-type": "application/json", key: apiKey },
+        });
+        const body = await response.json().catch(() => null) as unknown;
+        if (response.ok) return { status: "healthy", code: "ok", message: "Holded responde correctamente.", lastCheckedAt: checkedAt };
+        if (response.status === 401 || response.status === 403) return { status: "unhealthy", code: "invalid_api_key", message: "La clave de Holded no es válida.", lastCheckedAt: checkedAt };
+        if (response.status === 429) return { status: "unhealthy", code: "rate_limit", message: "Holded está limitando las peticiones.", lastCheckedAt: checkedAt };
+        return { status: "unhealthy", code: "unexpected_error", message: "Holded respondió con un error inesperado.", lastCheckedAt: checkedAt };
+      } catch (error) {
+        return {
+          status: "unhealthy",
+          code: "network_error",
+          message: "No se pudo contactar con Holded.",
+          lastCheckedAt: checkedAt,
+        };
+      }
     },
   };
 }
