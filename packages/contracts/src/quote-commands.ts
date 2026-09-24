@@ -23,6 +23,7 @@ export const quoteCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("updateQuoteText"), expectedRevision: common.expectedRevision, textId: z.uuid(), title: z.string(), body: z.string() }),
   z.object({ type: z.literal("removeQuoteText"), expectedRevision: common.expectedRevision, textId: z.uuid() }),
   z.object({ type: z.literal("reorderQuoteTexts"), expectedRevision: common.expectedRevision, orderedTextIds: z.array(z.uuid()) }),
+  z.object({ type: z.literal("changeQuoteStatus"), expectedRevision: common.expectedRevision, status: z.enum(["draft", "ready_for_review", "finalized"]) }),
   z.object({ type: z.literal("archiveQuote"), expectedRevision: common.expectedRevision }),
 ]);
 

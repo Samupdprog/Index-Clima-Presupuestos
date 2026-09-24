@@ -22,6 +22,8 @@ import {
   quoteTextBlocks,
   quoteVersions,
   auditEvents,
+  catalogMaterials,
+  createCatalogRepository,
 } from "../src/index.js";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -152,6 +154,43 @@ describe("quotes repository integration", () => {
     expect(copy.accessMode).toBe("editable");
     expect(copy.holdedEstimateId).toBeNull();
   });
+
+  it("changes status and preserves the Holded link when reopened", async () => {
+    const created = await repository.create({ installationId, title: "Estado editable" });
+    quoteIds.push(created.id);
+    const finalized = await repository.update({ installationId, id: created.id, expectedRevision: created.revision, status: "finalized", holdedEstimateId: "holded-estimate-test" });
+    expect(finalized.status).toBe("finalized");
+    expect(finalized.holdedEstimateId).toBe("holded-estimate-test");
+    const reopened = await repository.update({ installationId, id: created.id, expectedRevision: finalized.revision, status: "draft" });
+    expect(reopened.status).toBe("draft");
+    expect(reopened.holdedEstimateId).toBe("holded-estimate-test");
+  });
+});
+
+describe("catalog material import integration", () => {
+  const installationId = randomUUID();
+  const { db, pool } = createDb(databaseUrl);
+  const repository = createCatalogRepository(db);
+
+  beforeAll(async () => {
+    await db.insert(installations).values({ id: installationId, slug: `catalog-import-${installationId}`, displayName: "Catalog import" });
+  });
+
+  afterAll(async () => {
+    await db.delete(catalogMaterials).where(eq(catalogMaterials.installationId, installationId));
+    await db.delete(installations).where(eq(installations.id, installationId));
+    await pool.end();
+  });
+
+  it("imports a material batch in one transaction", async () => {
+    const imported = await repository.importMaterials(installationId, [
+      { name: "Unidad interior", supplierNameSnapshot: "Proveedor A", unit: "ud", supplierUnitPrice: "120.50", saleUnitPrice: "180", igicRate: "7" },
+      { name: "Tubería cobre", supplierCode: "COBRE-12", unit: "m", supplierUnitPrice: "8.25", saleUnitPrice: "14.50", igicRate: "7" },
+    ]);
+    expect(imported).toHaveLength(2);
+    expect(imported[0]?.supplierUnitPrice).toBe("120.500000");
+    expect(await repository.listMaterials(installationId)).toHaveLength(2);
+  });
 });
 
 describe("quote vertical workflow integration", () => {
@@ -221,5 +260,15 @@ describe("quote vertical workflow integration", () => {
     expect(run?.taxTotal).toBe("19.78");
     expect(await db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, quoteId))).toHaveLength(9);
     expect(await db.select().from(auditEvents).where(eq(auditEvents.entityId, quoteId))).toHaveLength(9);
+  });
+
+  it("deletes a line after calculations have been persisted", async () => {
+    await workflow.deleteLine({ installationId, quoteId, expectedRevision: 9, lineId: materialLineId });
+
+    const result = await quotesRepository.getQuoteById(installationId, quoteId);
+    expect(result?.revision).toBe(10);
+    expect(result?.lines).toHaveLength(2);
+    expect(result?.lines.some((line) => line.id === materialLineId)).toBe(false);
+    expect(await db.select().from(quoteLineCalculations).where(eq(quoteLineCalculations.quoteLineId, materialLineId))).toHaveLength(0);
   });
 });

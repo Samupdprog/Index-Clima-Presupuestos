@@ -108,6 +108,7 @@ export interface QuoteRecord {
   origin: QuoteOrigin;
   accessMode: QuoteAccessMode;
   status: QuoteStatus;
+  holdedEstimateId?: string | null;
   revision: number;
   createdAt: string;
   updatedAt: string;

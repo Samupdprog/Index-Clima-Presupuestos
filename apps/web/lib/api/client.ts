@@ -1,4 +1,4 @@
-import type { CreateClientRequest, CreateQuoteRequest, QuoteCommand, UpdateClientRequest } from "@quotes/contracts";
+import type { CreateClientRequest, CreateQuoteRequest, MaterialImportRow, QuoteCommand, UpdateClientRequest } from "@quotes/contracts";
 import type {
   CatalogKind,
   CatalogRecord,
@@ -42,6 +42,7 @@ export const api = {
   createQuote: (data: CreateQuoteRequest) => request<QuoteRecord>("/quotes", { method: "POST", body: JSON.stringify(data) }),
   duplicateQuote: (id: string) => request<QuoteRecord>(`/quotes/${id}/duplicate`, { method: "POST", body: "{}" }),
   archiveQuote: (id: string, expectedRevision: number) => request<QuoteRecord>(`/quotes/${id}/commands`, { method: "POST", body: JSON.stringify({ type: "archiveQuote", expectedRevision }) }),
+  exportQuoteToHolded: (id: string, expectedRevision: number) => request<QuoteRecord>(`/quotes/${id}/holded`, { method: "POST", body: JSON.stringify({ expectedRevision }) }),
   command: (id: string, command: QuoteCommand) => request<{ quote: QuoteRecord; calculation: QuoteRecord["calculation"] }>(`/quotes/${id}/commands`, { method: "POST", body: JSON.stringify(command) }),
 
   searchClients: (q = "") => request<ClientRecord[]>(query("/clients", { q })),
@@ -52,6 +53,7 @@ export const api = {
   createCatalog: <T extends CatalogRecord>(kind: CatalogKind, data: Record<string, unknown>) => request<T>(`/catalogs/${kind}`, { method: "POST", body: JSON.stringify(data) }),
   updateCatalog: <T extends CatalogRecord>(kind: CatalogKind, id: string, data: Record<string, unknown>) => request<T>(`/catalogs/${kind}/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   archiveCatalog: <T extends CatalogRecord>(kind: CatalogKind, id: string) => request<T>(`/catalogs/${kind}/${id}/archive`, { method: "POST", body: "{}" }),
+  importMaterials: (rows: MaterialImportRow[]) => request<MaterialRecord[]>("/catalogs/materials/import", { method: "POST", body: JSON.stringify({ rows }) }),
 };
 
 export type { MaterialRecord, EmployeeRecord, TravelRecord, SupplierRecord, TextTemplateRecord };

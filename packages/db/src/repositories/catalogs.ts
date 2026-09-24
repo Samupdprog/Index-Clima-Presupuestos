@@ -11,6 +11,7 @@ export function createCatalogRepository(db: Database) {
     listTextTemplates: (installationId: string) => db.select().from(textTemplates).where(eq(textTemplates.installationId, installationId)),
     listSuppliers: (installationId: string) => db.select().from(suppliers).where(eq(suppliers.installationId, installationId)),
     createMaterial: (input: typeof catalogMaterials.$inferInsert) => db.insert(catalogMaterials).values(input).returning(),
+    importMaterials: (installationId: string, rows: Array<Omit<typeof catalogMaterials.$inferInsert, "installationId">>) => db.transaction((tx) => tx.insert(catalogMaterials).values(rows.map((row) => ({ ...row, installationId }))).returning()),
     createEmployee: (input: typeof employees.$inferInsert) => db.insert(employees).values(input).returning(),
     createSupplement: (input: typeof employeeSupplements.$inferInsert) => db.insert(employeeSupplements).values(input).returning(),
     createTravel: (input: typeof catalogTravels.$inferInsert) => db.insert(catalogTravels).values(input).returning(),

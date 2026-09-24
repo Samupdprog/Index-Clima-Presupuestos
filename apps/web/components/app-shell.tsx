@@ -125,7 +125,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <RippleButton
                     variant="ghost"
                     size="icon"
-                    aria-label={resolvedTheme === "dark" ? "Usar tema claro" : "Usar tema oscuro"}
+                    aria-label={mounted ? (resolvedTheme === "dark" ? "Usar tema claro" : "Usar tema oscuro") : "Cambiar tema"}
                     onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
                   >
                     {mounted && resolvedTheme === "dark" ? <Sun /> : <Moon />}

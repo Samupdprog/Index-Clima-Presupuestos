@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DropdownMenu } from "radix-ui";
-import { Archive, ArchiveRestore, Copy, FilePlus2, MoreHorizontal, Search, UserPlus } from "lucide-react";
+import { ArrowLeft, ArrowRight, Archive, ArchiveRestore, Bot, Copy, FilePlus2, MoreHorizontal, PenLine, Search, Sparkles, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Dialog, DialogClose, DialogContent } from "../animate-ui/overlay";
 import { RippleButton } from "../animate-ui/ripple-button";
 import { ErrorState, ToastViewport, useToasts } from "../ui/feedback";
 import { OriginBadge, StatusBadge } from "../ui/badges";
+import { SearchableSelect } from "../ui/searchable-select";
 import { api, ApiError } from "../../lib/api/client";
 import type { ClientRecord, QuoteRecord, QuoteStatus } from "../../lib/api/types";
 import { formatDate, formatMoney } from "../../lib/format";
@@ -111,7 +112,7 @@ export function QuotesPage() {
           </table>
         )}
       </div>
-      <CreateQuoteDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={(quote) => { push("Presupuesto creado"); router.push(`/presupuestos/${quote.id}`); }} />
+      <CreateQuoteDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={(quote, method) => { push("Presupuesto creado"); router.push(`/presupuestos/${quote.id}?inicio=${method}`); }} />
       <Dialog open={Boolean(archiveTarget)} onOpenChange={(open) => { if (!open) setArchiveTarget(null); }}>
         <DialogContent title="Archivar presupuesto" description={`Podrás seguir consultando ${archiveTarget?.reference ?? "este presupuesto"}, pero quedará en modo archivado.`} footer={<><DialogClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></DialogClose><RippleButton variant="danger" onClick={() => void archive()}><Archive />Archivar</RippleButton></>}>
           <p style={{ margin: 0, color: "var(--foreground-muted)" }}>Esta acción no elimina los datos.</p>
@@ -122,24 +123,32 @@ export function QuotesPage() {
   );
 }
 
-function CreateQuoteDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (quote: QuoteRecord) => void }) {
+function CreateQuoteDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: (quote: QuoteRecord, method: "ia" | "manual") => void }) {
   const [clients, setClients] = useState<ClientRecord[]>([]);
+  const [step, setStep] = useState<1 | 2>(1);
+  const [method, setMethod] = useState<"ia" | "manual" | null>(null);
   const [clientId, setClientId] = useState("");
   const [title, setTitle] = useState("");
   const [quickClient, setQuickClient] = useState(false);
   const [clientName, setClientName] = useState("");
+  const [clientDetails, setClientDetails] = useState({ taxId: "", email: "", phone: "", address: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => { if (open) void api.searchClients("").then(setClients).catch(() => setClients([])); }, [open]);
+  useEffect(() => {
+    if (open) {
+      setStep(1); setMethod(null); setClientId(""); setTitle(""); setQuickClient(false); setClientName(""); setClientDetails({ taxId: "", email: "", phone: "", address: "" }); setError("");
+      void api.searchClients("").then(setClients).catch(() => setClients([]));
+    }
+  }, [open]);
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
     try {
       let selectedClientId = clientId || undefined;
-      if (quickClient && clientName.trim()) selectedClientId = (await api.createClient({ name: clientName.trim() })).id;
+      if (quickClient && clientName.trim()) selectedClientId = (await api.createClient({ name: clientName.trim(), ...(clientDetails.taxId.trim() ? { taxId: clientDetails.taxId.trim() } : {}), ...(clientDetails.email.trim() ? { email: clientDetails.email.trim() } : {}), ...(clientDetails.phone.trim() ? { phone: clientDetails.phone.trim() } : {}), ...(clientDetails.address.trim() ? { address: clientDetails.address.trim() } : {}) })).id;
       const quote = await api.createQuote({ title: title.trim(), clientId: selectedClientId, origin: "generator", accessMode: "editable" });
-      onOpenChange(false); setTitle(""); setClientId(""); setClientName(""); setQuickClient(false); onCreated(quote);
+      onOpenChange(false); onCreated(quote, method ?? "manual");
     } catch (cause) {
       setError(cause instanceof ApiError && cause.status === 503 ? "La API no está disponible." : "Revisa los datos e inténtalo de nuevo.");
     } finally { setBusy(false); }
@@ -147,15 +156,35 @@ function CreateQuoteDialog({ open, onOpenChange, onCreated }: { open: boolean; o
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="Nuevo presupuesto" description="Dos datos y entrarás directamente al editor." footer={<><DialogClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></DialogClose><RippleButton type="submit" form="create-quote-form" disabled={busy || !title.trim() || (quickClient && !clientName.trim())}>{busy ? "Creando…" : "Crear y editar"}</RippleButton></>}>
-        <form id="create-quote-form" onSubmit={submit} className="form-grid">
-          <div className="field span-2"><label className="field-label" htmlFor="quote-title">Título del presupuesto</label><input id="quote-title" className="input" autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ej. Climatización vivienda Las Palmas" required /></div>
-          <div className="field span-2">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><label className="field-label" htmlFor="quote-client">Cliente</label><button type="button" className="button button-ghost button-sm" onClick={() => setQuickClient((value) => !value)}><UserPlus />{quickClient ? "Elegir existente" : "Crear rápido"}</button></div>
-            {quickClient ? <input id="quote-client" className="input" value={clientName} onChange={(event) => setClientName(event.target.value)} placeholder="Nombre del nuevo cliente" /> : <select id="quote-client" className="select" value={clientId} onChange={(event) => setClientId(event.target.value)}><option value="">Sin cliente por ahora</option>{clients.map((client) => <option value={client.id} key={client.id}>{client.name}</option>)}</select>}
+      <DialogContent
+        title={step === 1 ? "¿Cómo quieres empezar?" : "Cliente y trabajo"}
+        description={step === 1 ? "Elige el camino más cómodo. Ambos terminan en el mismo editor guiado." : "Deja identificado el presupuesto antes de preparar los conceptos."}
+        footer={step === 1
+          ? <><DialogClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></DialogClose><RippleButton disabled={!method} onClick={() => setStep(2)}>Continuar<ArrowRight /></RippleButton></>
+          : <><RippleButton variant="ghost" onClick={() => setStep(1)}><ArrowLeft />Atrás</RippleButton><RippleButton type="submit" form="create-quote-form" disabled={busy || !title.trim() || (quickClient ? !clientName.trim() : !clientId)}>{busy ? "Creando…" : method === "ia" ? "Crear y preparar con IA" : "Crear y añadir conceptos"}<ArrowRight /></RippleButton></>}
+      >
+        <div className="dialog-progress" aria-label="Progreso de creación"><span data-active={step === 1}>1. Camino</span><span data-active={step === 2}>2. Cliente y trabajo</span></div>
+        {step === 1 ? (
+          <div className="start-paths">
+            <button type="button" className="start-path" data-selected={method === "ia"} onClick={() => setMethod("ia")}>
+              <span className="start-path-icon"><Bot /></span><span><strong>Preparar con IA</strong><small>Copia unas instrucciones, procesa las ofertas y revisa el JSON antes de importar.</small><em><Sparkles />Recomendado para ofertas de proveedor</em></span>
+            </button>
+            <button type="button" className="start-path" data-selected={method === "manual"} onClick={() => setMethod("manual")}>
+              <span className="start-path-icon"><PenLine /></span><span><strong>Crear paso a paso</strong><small>Añade material, mano de obra y desplazamientos desde formularios breves.</small><em>Control manual completo</em></span>
+            </button>
           </div>
-          {error ? <p className="error-text span-2" role="alert">{error}</p> : null}
-        </form>
+        ) : (
+          <form id="create-quote-form" onSubmit={submit} className="form-grid">
+            <div className="field span-2"><label className="field-label" htmlFor="quote-title">Nombre del trabajo</label><input id="quote-title" className="input" autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ej. Climatización vivienda Las Palmas" required /></div>
+            <div className="field span-2">
+              <div className="field-label-row"><label className="field-label" htmlFor="quote-client">Cliente</label><button type="button" className="button button-ghost button-sm" onClick={() => setQuickClient((value) => !value)}><UserPlus />{quickClient ? "Elegir existente" : "Crear cliente rápido"}</button></div>
+              {quickClient ? <div className="quick-client-fields"><div className="field span-2"><label className="field-label" htmlFor="quote-client">Nombre o razón social</label><input id="quote-client" className="input" value={clientName} onChange={(event) => setClientName(event.target.value)} placeholder="Nombre del nuevo cliente" required /></div><div className="field"><label className="field-label" htmlFor="quick-client-tax">NIF / CIF</label><input id="quick-client-tax" className="input" value={clientDetails.taxId} onChange={(event) => setClientDetails((current) => ({ ...current, taxId: event.target.value }))} /></div><div className="field"><label className="field-label" htmlFor="quick-client-phone">Teléfono</label><input id="quick-client-phone" className="input" value={clientDetails.phone} onChange={(event) => setClientDetails((current) => ({ ...current, phone: event.target.value }))} /></div><div className="field span-2"><label className="field-label" htmlFor="quick-client-email">Email</label><input id="quick-client-email" className="input" type="email" value={clientDetails.email} onChange={(event) => setClientDetails((current) => ({ ...current, email: event.target.value }))} /></div><div className="field span-2"><label className="field-label" htmlFor="quick-client-address">Dirección</label><input id="quick-client-address" className="input" value={clientDetails.address} onChange={(event) => setClientDetails((current) => ({ ...current, address: event.target.value }))} /></div></div> : <SearchableSelect id="quote-client" value={clientId} onChange={setClientId} required allowClear={false} placeholder="Escribe para buscar un cliente…" options={clients.map((client) => ({ value: client.id, label: client.name, description: [client.taxId, client.email].filter(Boolean).join(" · ") || "Cliente guardado", keywords: `${client.phone ?? ""} ${client.address ?? ""}` }))} />}
+              <span className="field-hint">El cliente quedará asociado al crear el presupuesto.</span>
+            </div>
+            <div className="notice span-2"><Sparkles /><span><strong>Siguiente:</strong> {method === "ia" ? "te guiaremos para extraer y revisar las ofertas." : "entrarás directamente en los conceptos."}</span></div>
+            {error ? <p className="error-text span-2" role="alert">{error}</p> : null}
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

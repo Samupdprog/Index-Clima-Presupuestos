@@ -21,6 +21,7 @@ import {
   searchClients,
   searchQuotes,
   updateClient,
+  updateQuote,
 } from "@quotes/application";
 import {
   createClientRequestSchema,
@@ -32,6 +33,7 @@ import {
   quoteCommandSchema,
   catalogMutationSchema,
   catalogUpdateSchema,
+  materialImportRequestSchema,
 } from "@quotes/contracts";
 import {
   createClientRepository,
@@ -43,6 +45,7 @@ import {
   ReadOnlyQuoteError,
   RevisionConflictError,
 } from "@quotes/db";
+import { createHoldedClient, HoldedApiError } from "@quotes/holded";
 
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? "4000");
@@ -83,6 +86,7 @@ function mapError(res: ServerResponse, error: unknown) {
   if (error instanceof QuoteNotFoundError) return sendJson(res, 404, { error: "quote_not_found" });
   if (error instanceof ReadOnlyQuoteError) return sendJson(res, 422, { error: "quote_read_only" });
   if (error instanceof Error && error.message === "invalid_json") return sendJson(res, 400, { error: "invalid_json" });
+  if (error instanceof HoldedApiError) return sendJson(res, 502, { error: "holded_sync_failed", details: { status: error.status } });
   if (error && typeof error === "object" && "code" in error && error.code === "23505") return sendJson(res, 409, { error: "conflict" });
   console.error(error);
   return sendJson(res, 500, { error: "internal_error" });
@@ -132,6 +136,17 @@ const server = createServer(async (req, res) => {
       const data = { ...parsed.data, installationId: installationId! };
       const created = path[1] === "materials" ? await catalog!.createMaterial(data as never) : path[1] === "employees" ? await catalog!.createEmployee(data as never) : path[1] === "supplements" ? await catalog!.createSupplement(data as never) : path[1] === "travels" ? await catalog!.createTravel(data as never) : path[1] === "text-templates" ? await catalog!.createTextTemplate(data as never) : path[1] === "suppliers" ? await catalog!.createSupplier(data as never) : null;
       return created ? sendJson(res, 201, created[0]) : sendJson(res, 404, { error: "catalog_not_found" });
+    }
+    if (path[0] === "catalogs" && path[1] === "materials" && path[2] === "import" && path.length === 3 && req.method === "POST") {
+      const parsed = materialImportRequestSchema.safeParse(await readBody(req));
+      if (!parsed.success) return sendJson(res, 400, { error: "invalid_input", details: parsed.error.issues });
+      const rows = parsed.data.rows.map((row) => ({
+        ...row,
+        supplierUnitPrice: normalizeDecimal(row.supplierUnitPrice),
+        saleUnitPrice: normalizeDecimal(row.saleUnitPrice),
+        igicRate: normalizeDecimal(row.igicRate) ?? "7",
+      }));
+      return sendJson(res, 201, await catalog!.importMaterials(installationId!, rows));
     }
     if (path[0] === "catalogs" && path.length === 3 && req.method === "PATCH") {
       const parsed = catalogUpdateSchema.safeParse(await readBody(req));
@@ -183,8 +198,23 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 200, await addPriceAdjustment(quoteWorkflow!)({ installationId: installationId!, quoteId: path[1]!, expectedRevision, adjustment: { scope, mode, value, targetLineIds } }));
       }
       if (command.type === "addQuoteText") return sendJson(res, 200, await addQuoteText(quoteWorkflow!)(context as never));
+      if (command.type === "changeQuoteStatus") return sendJson(res, 200, await updateQuote(quotes!)({ installationId: installationId!, id: path[1]!, expectedRevision: command.expectedRevision, status: command.status }));
       if (command.type === "archiveQuote") return sendJson(res, 200, await archiveQuote(quotes!)({ installationId: installationId!, id: path[1]!, expectedRevision: command.expectedRevision, status: "archived" }));
       return sendJson(res, 200, await executeQuoteCommand(quoteWorkflow!, context as unknown as Record<string, unknown>));
+    }
+    if (path[0] === "quotes" && path.length === 3 && path[2] === "holded" && req.method === "POST") {
+      const parsed = revisionGuardSchema.safeParse(await readBody(req));
+      if (!parsed.success) return sendJson(res, 400, { error: "invalid_input", details: parsed.error.issues });
+      if (process.env.FEATURE_HOLDED !== "true" || !process.env.HOLDED_API_KEY) return sendJson(res, 503, { error: "holded_not_configured" });
+      const quote = await getQuote(quotes!)(installationId!, path[1]!);
+      if (!quote) return sendJson(res, 404, { error: "quote_not_found" });
+      if (quote.revision !== parsed.data.expectedRevision) return sendJson(res, 409, { error: "revision_conflict" });
+      if (quote.accessMode === "read_only" || quote.status === "archived") return sendJson(res, 422, { error: "quote_read_only" });
+      const holdedInput = buildHoldedEstimate(quote);
+      if (!holdedInput) return sendJson(res, 422, { error: "quote_not_calculated" });
+      const result = await createHoldedClient(process.env.HOLDED_API_KEY).saveEstimate(holdedInput);
+      await updateQuote(quotes!)({ installationId: installationId!, id: quote.id, expectedRevision: quote.revision, status: "finalized", holdedEstimateId: result.id });
+      return sendJson(res, 200, await getQuote(quotes!)(installationId!, quote.id));
     }
     if (path[0] === "quotes" && path.length === 2 && req.method === "PATCH") {
       const parsed = revisionGuardSchema.safeParse(await readBody(req));
@@ -207,3 +237,35 @@ function stop() {
 
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
+
+function normalizeDecimal(value: string | undefined) {
+  return value?.trim() ? value.trim().replace(",", ".") : undefined;
+}
+
+type HoldedQuote = NonNullable<Awaited<ReturnType<ReturnType<typeof getQuote>>>>;
+
+function buildHoldedEstimate(quote: HoldedQuote) {
+  const calculation = quote.calculation as { lines?: Array<{ quoteLineId?: string; sale?: string }> } | null | undefined;
+  if (!calculation?.lines) return null;
+  const sales = new Map(calculation.lines.map((line) => [line.quoteLineId, line.sale]));
+  const lines = quote.lines as Array<{ id: string; type: string; description: string; igicRate: string }>;
+  const items = lines.filter((line) => !["title", "adjustment"].includes(line.type)).map((line) => ({
+    name: line.description.slice(0, 250),
+    units: 1,
+    price: Number(sales.get(line.id) ?? "0"),
+    tax: Number(line.igicRate),
+  }));
+  if (!items.length || items.some((item) => !Number.isFinite(item.price) || !Number.isFinite(item.tax))) return null;
+  const client = (quote.clientSnapshot ?? {}) as Record<string, unknown>;
+  return {
+    ...(quote.holdedEstimateId ? { documentId: quote.holdedEstimateId } : {}),
+    reference: quote.reference,
+    title: quote.title,
+    date: Math.floor(Date.now() / 1000),
+    contactName: typeof client.name === "string" && client.name.trim() ? client.name : "Cliente",
+    ...(typeof client.email === "string" && client.email.trim() ? { contactEmail: client.email } : {}),
+    ...(typeof client.address === "string" && client.address.trim() ? { contactAddress: client.address } : {}),
+    notes: `Presupuesto ${quote.reference} generado desde Index Clima`,
+    items,
+  };
+}

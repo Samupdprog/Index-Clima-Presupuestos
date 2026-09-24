@@ -52,6 +52,25 @@ docker compose run --rm migrate
 
 El servicio es one-shot, no publica puertos y espera a que PostgreSQL esté healthy.
 
+## Activar la exportación a Holded
+
+La acción “Guardar e importar en Holded” se ejecuta desde la API para que la
+credencial nunca llegue al navegador. Configura en `.env`:
+
+```bash
+FEATURE_HOLDED=true
+HOLDED_API_KEY=tu_clave_privada
+```
+
+Después recrea al menos el servicio API:
+
+```bash
+docker compose up -d --build api
+```
+
+Con `FEATURE_HOLDED=false` o sin clave, la interfaz conserva el presupuesto sin
+cambiar su estado y muestra que la integración no está configurada.
+
 Crear o actualizar la instalación configurada en `INSTALLATION_SLUG`:
 
 ```bash
