@@ -32,8 +32,9 @@ services:
       dockerfile: infra/docker/migrate.Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      INSTALLATION_SLUG: ${INSTALLATION_SLUG:-demo}
-      INSTALLATION_NAME: ${INSTALLATION_NAME:-Demo Company}
+      INSTALLATION_ID: ${INSTALLATION_ID:-}
+      INSTALLATION_SLUG: ${INSTALLATION_SLUG:-index-clima}
+      INSTALLATION_NAME: ${INSTALLATION_NAME:-Index Clima}
     networks:
       - private
     depends_on:
@@ -134,6 +135,10 @@ services:
       - no-new-privileges:true
 
   mcp:
+    # MCP aún no está habilitado (FEATURE_MCP=false). Bajo un profile para que
+    # NO arranque por defecto y no entre en bucle de reinicio. Para levantarlo
+    # explícitamente: `docker compose --profile mcp up -d mcp`.
+    profiles: ["mcp"]
     build:
       context: .
       dockerfile: infra/docker/mcp.Dockerfile
