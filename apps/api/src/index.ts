@@ -15,14 +15,15 @@ import {
   executeQuoteCommand,
   getCatalog,
   type QuoteWorkflowRepository,
-  createClient,
+  type HoldedContactGateway,
+  createClientWithHolded,
   createQuote,
   duplicateQuote,
   getClient,
   getQuote,
-  searchClients,
+  searchClientsWithHolded,
   searchQuotes,
-  updateClient,
+  updateClientWithHolded,
   updateQuote,
 } from "@quotes/application";
 import {
@@ -49,6 +50,7 @@ import {
   RevisionConflictError,
 } from "@quotes/db";
 import { createHoldedClient, HoldedApiError, maskApiKey, type HoldedHealthResult } from "@quotes/holded";
+import { createHoldedContactGateway } from "./holded-gateway.js";
 
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? "4000");
@@ -175,7 +177,7 @@ async function runHoldedHealthCheck(force = false): Promise<HoldedHealthResult> 
       return result;
     }
 
-    const result = await createHoldedClient(resolvedKey).checkHealth();
+    const result = await createHoldedClient({ apiKey: resolvedKey }).checkHealth();
     await persistHoldedHealth(result);
     return result;
   })();
@@ -225,6 +227,18 @@ async function updateHoldedSettings(payload: Record<string, unknown>) {
   await writeInstallationConfig(nextConfig);
 
   return buildHoldedSettingsPayload();
+}
+
+/**
+ * Construye el gateway de contactos de Holded si la integración está activa y
+ * hay clave configurada; en caso contrario devuelve null (modo degradado).
+ */
+async function buildHoldedGateway(): Promise<HoldedContactGateway | null> {
+  const config = await readInstallationConfig();
+  const featureEnabled = process.env.FEATURE_HOLDED === "true";
+  const resolvedKey = getConfiguredHoldedApiKey(config);
+  if (!featureEnabled || !resolvedKey) return null;
+  return createHoldedContactGateway(createHoldedClient({ apiKey: resolvedKey }));
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
@@ -279,7 +293,8 @@ const server = createServer(async (req, res) => {
     if (path[0] === "clients" && path.length === 1 && req.method === "POST") {
       const parsed = createClientRequestSchema.safeParse(await readBody(req));
       if (!parsed.success) return sendJson(res, 400, { error: "invalid_input", details: parsed.error.issues });
-      return sendJson(res, 201, await createClient(clients!)({ installationId: installationId!, ...parsed.data }));
+      const holded = await buildHoldedGateway();
+      return sendJson(res, 201, await createClientWithHolded({ clients: clients!, holded })({ installationId: installationId!, ...parsed.data }));
     }
     if (path[0] === "holded" && path.length === 2 && path[1] === "settings" && req.method === "GET") {
       return sendJson(res, 200, await buildHoldedSettingsPayload());
@@ -295,7 +310,10 @@ const server = createServer(async (req, res) => {
     if (path[0] === "clients" && path.length === 1 && req.method === "GET") {
       const parsed = searchClientsRequestSchema.safeParse(Object.fromEntries(url.searchParams));
       if (!parsed.success) return sendJson(res, 400, { error: "invalid_input" });
-      return sendJson(res, 200, await searchClients(clients!)(installationId!, parsed.data.q));
+      const holded = await buildHoldedGateway();
+      const result = await searchClientsWithHolded({ clients: clients!, holded })(installationId!, parsed.data.q);
+      res.writeHead(200, { "content-type": "application/json", "x-holded-search": result.holded });
+      return res.end(JSON.stringify(result.clients));
     }
     if (path[0] === "clients" && path.length === 2 && req.method === "GET") {
       const result = await getClient(clients!)(installationId!, path[1]!);
@@ -304,7 +322,8 @@ const server = createServer(async (req, res) => {
     if (path[0] === "clients" && path.length === 2 && req.method === "PATCH") {
       const parsed = updateClientRequestSchema.safeParse(await readBody(req));
       if (!parsed.success) return sendJson(res, 400, { error: "invalid_input", details: parsed.error.issues });
-      return sendJson(res, 200, await updateClient(clients!)({ installationId: installationId!, id: path[1]!, ...parsed.data }));
+      const holded = await buildHoldedGateway();
+      return sendJson(res, 200, await updateClientWithHolded({ clients: clients!, holded })({ installationId: installationId!, id: path[1]!, ...parsed.data }));
     }
     if (path[0] === "catalogs" && path.length === 2 && req.method === "GET") {
       const kinds = ["materials", "employees", "supplements", "travels", "text-templates", "suppliers"] as const;
@@ -395,7 +414,7 @@ const server = createServer(async (req, res) => {
       if (quote.accessMode === "read_only" || quote.status === "archived") return sendJson(res, 422, { error: "quote_read_only" });
       const holdedInput = buildHoldedEstimate(quote);
       if (!holdedInput) return sendJson(res, 422, { error: "quote_not_calculated" });
-      const result = await createHoldedClient(resolvedKey).saveEstimate(holdedInput);
+      const result = await createHoldedClient({ apiKey: resolvedKey }).saveEstimate(holdedInput);
       await updateQuote(quotes!)({ installationId: installationId!, id: quote.id, expectedRevision: quote.revision, status: "finalized", holdedEstimateId: result.id });
       return sendJson(res, 200, await getQuote(quotes!)(installationId!, quote.id));
     }
