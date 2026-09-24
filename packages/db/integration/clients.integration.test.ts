@@ -22,6 +22,8 @@ import {
   quoteTextBlocks,
   quoteVersions,
   auditEvents,
+  catalogMaterials,
+  createCatalogRepository,
 } from "../src/index.js";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -152,6 +154,43 @@ describe("quotes repository integration", () => {
     expect(copy.accessMode).toBe("editable");
     expect(copy.holdedEstimateId).toBeNull();
   });
+
+  it("changes status and preserves the Holded link when reopened", async () => {
+    const created = await repository.create({ installationId, title: "Estado editable" });
+    quoteIds.push(created.id);
+    const finalized = await repository.update({ installationId, id: created.id, expectedRevision: created.revision, status: "finalized", holdedEstimateId: "holded-estimate-test" });
+    expect(finalized.status).toBe("finalized");
+    expect(finalized.holdedEstimateId).toBe("holded-estimate-test");
+    const reopened = await repository.update({ installationId, id: created.id, expectedRevision: finalized.revision, status: "draft" });
+    expect(reopened.status).toBe("draft");
+    expect(reopened.holdedEstimateId).toBe("holded-estimate-test");
+  });
+});
+
+describe("catalog material import integration", () => {
+  const installationId = randomUUID();
+  const { db, pool } = createDb(databaseUrl);
+  const repository = createCatalogRepository(db);
+
+  beforeAll(async () => {
+    await db.insert(installations).values({ id: installationId, slug: `catalog-import-${installationId}`, displayName: "Catalog import" });
+  });
+
+  afterAll(async () => {
+    await db.delete(catalogMaterials).where(eq(catalogMaterials.installationId, installationId));
+    await db.delete(installations).where(eq(installations.id, installationId));
+    await pool.end();
+  });
+
+  it("imports a material batch in one transaction", async () => {
+    const imported = await repository.importMaterials(installationId, [
+      { name: "Unidad interior", supplierNameSnapshot: "Proveedor A", unit: "ud", supplierUnitPrice: "120.50", saleUnitPrice: "180", igicRate: "7" },
+      { name: "Tubería cobre", supplierCode: "COBRE-12", unit: "m", supplierUnitPrice: "8.25", saleUnitPrice: "14.50", igicRate: "7" },
+    ]);
+    expect(imported).toHaveLength(2);
+    expect(imported[0]?.supplierUnitPrice).toBe("120.500000");
+    expect(await repository.listMaterials(installationId)).toHaveLength(2);
+  });
 });
 
 describe("quote vertical workflow integration", () => {
@@ -221,5 +260,51 @@ describe("quote vertical workflow integration", () => {
     expect(run?.taxTotal).toBe("19.78");
     expect(await db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, quoteId))).toHaveLength(9);
     expect(await db.select().from(auditEvents).where(eq(auditEvents.entityId, quoteId))).toHaveLength(9);
+  });
+
+  it("deletes a line after calculations have been persisted", async () => {
+    await workflow.deleteLine({ installationId, quoteId, expectedRevision: 9, lineId: materialLineId });
+
+    const result = await quotesRepository.getQuoteById(installationId, quoteId);
+    expect(result?.revision).toBe(10);
+    expect(result?.lines).toHaveLength(2);
+    expect(result?.lines.some((line) => line.id === materialLineId)).toBe(false);
+    expect(await db.select().from(quoteLineCalculations).where(eq(quoteLineCalculations.quoteLineId, materialLineId))).toHaveLength(0);
+  });
+
+  it("creates and updates a discounted material with one revision per transaction", async () => {
+    const line = { description: "Material compuesto", unit: "ud", quantity: "2", igicRate: "7", saleRule: "add_percentage" as const, saleRuleValue: "10", saleBaseMode: "net_cost" as const, baseUnitPrice: null, directUnitCost: null, supplierUnitPrice: "100" };
+    await workflow.createLineWithDetails({ installationId, quoteId, expectedRevision: 10, lineType: "material", line, discounts: [{ percentage: "20" }, { percentage: "5" }], laborEntries: [] });
+    let result = (await quotesRepository.getQuoteById(installationId, quoteId))!;
+    expect(result.revision).toBe(11);
+    const created = result.lines.find((item) => item.description === "Material compuesto")!;
+    expect(created.discounts.map((item) => Number(item.percentage))).toEqual([20, 5]);
+    expect(created.baseUnitPrice).toBe("76.000000");
+    expect(result.calculation?.lines.find((item) => item.quoteLineId === created.id)?.baseSale).toBe("167.20");
+    await expect(workflow.createLineWithDetails({ installationId, quoteId, expectedRevision: 10, lineType: "material", line, discounts: [], laborEntries: [] })).rejects.toBeInstanceOf(RevisionConflictError);
+    result = (await quotesRepository.getQuoteById(installationId, quoteId))!;
+    expect(result.lines.filter((item) => item.description === "Material compuesto")).toHaveLength(1);
+    await workflow.updateLineDetails({ installationId, quoteId, expectedRevision: 11, lineId: created.id, line, discounts: [{ id: created.discounts[1]!.id, percentage: "5" }, { id: created.discounts[0]!.id, percentage: "10" }], laborEntries: [] });
+    result = (await quotesRepository.getQuoteById(installationId, quoteId))!;
+    expect(result.revision).toBe(12);
+    expect(result.lines.find((item) => item.id === created.id)?.discounts.map((item) => Number(item.percentage))).toEqual([5, 10]);
+    expect(result.lines.find((item) => item.id === created.id)?.baseUnitPrice).toBe("85.500000");
+  });
+
+  it("creates one labor line with employees and edits them together", async () => {
+    const line = { description: "Equipo instalación", unit: "h", quantity: "1", igicRate: "7", saleRule: "unit_price" as const, saleRuleValue: "0", saleBaseMode: "net_cost" as const, baseUnitPrice: null, directUnitCost: null, supplierUnitPrice: null };
+    const workers = [{ employeeNameSnapshot: "Juan", hours: "4", costRateSnapshot: "22.50", saleRateSnapshot: "42" }, { employeeNameSnapshot: "Pedro", hours: "3", costRateSnapshot: "21", saleRateSnapshot: "40" }];
+    await workflow.createLineWithDetails({ installationId, quoteId, expectedRevision: 12, lineType: "labor", line, discounts: [], laborEntries: workers });
+    let result = (await quotesRepository.getQuoteById(installationId, quoteId))!;
+    expect(result.revision).toBe(13);
+    const created = result.lines.find((item) => item.description === "Equipo instalación")!;
+    expect(created.laborEntries).toHaveLength(2);
+    expect(result.calculation?.lines.find((item) => item.quoteLineId === created.id)?.baseSale).toBe("288.00");
+    await workflow.updateLineDetails({ installationId, quoteId, expectedRevision: 13, lineId: created.id, line, discounts: [], laborEntries: [{ id: created.laborEntries[0]!.id, ...workers[0]!, hours: "5", saleRateSnapshot: "43" }] });
+    result = (await quotesRepository.getQuoteById(installationId, quoteId))!;
+    expect(result.revision).toBe(14);
+    expect(result.lines.find((item) => item.id === created.id)?.laborEntries).toHaveLength(1);
+    expect(result.calculation?.lines.find((item) => item.quoteLineId === created.id)?.baseSale).toBe("215.00");
+    expect(result.calculation?.lines.find((item) => item.quoteLineId === created.id)?.cost).toBe("112.50");
   });
 });

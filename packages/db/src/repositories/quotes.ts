@@ -20,6 +20,7 @@ export interface UpdateQuoteInput {
   title?: string;
   clientId?: string | null;
   status?: "draft" | "ready_for_review" | "finalized" | "archived";
+  holdedEstimateId?: string;
 }
 
 type QueryExecutor = Pick<Database, "select" | "insert" | "update">;

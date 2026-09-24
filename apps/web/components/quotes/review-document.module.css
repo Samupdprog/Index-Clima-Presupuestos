@@ -1,0 +1,325 @@
+.document {
+  --pdf-ink: #111827;
+  --pdf-muted: #515b67;
+  --pdf-rule: #18202a;
+  --pdf-brand: #123760;
+
+  position: relative;
+  width: 794px;
+  min-height: 1123px;
+  margin: 0 auto;
+  padding: 48px 42px 30px;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  color: var(--pdf-ink);
+  font-family:
+    Inter,
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-size: 12px;
+  line-height: 1.42;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.1);
+}
+
+.topRule {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  background: var(--pdf-brand);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 48px;
+}
+
+.documentHeading {
+  min-width: 0;
+  flex: 1;
+}
+
+.documentHeading h1 {
+  margin: 0;
+  color: var(--pdf-brand);
+  font-size: 29px;
+  font-weight: 780;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+.documentMeta {
+  width: 255px;
+  margin: 28px 0 0;
+}
+
+.documentMeta > div {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  margin-top: 5px;
+}
+
+.documentMeta dt,
+.documentMeta dd {
+  margin: 0;
+}
+
+.documentMeta dt {
+  font-weight: 750;
+  color: #111111;
+}
+
+.documentMeta dd {
+  text-align: right;
+  color: #111111;
+}
+
+.documentMeta .jobRow {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #e8ebee;
+}
+
+.documentMeta .jobRow dd {
+  text-align: left;
+  line-height: 1.3;
+}
+
+.logoWrap {
+  flex: 0 0 185px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.logo {
+  display: block;
+  width: 178px;
+  height: auto;
+  object-fit: contain;
+}
+
+.parties {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 0.76fr);
+  gap: 100px;
+  margin-top: 44px;
+}
+
+.companyBlock,
+.clientBlock {
+  min-width: 0;
+}
+
+.companyBlock h2,
+.clientBlock h2 {
+  margin: 0 0 3px;
+  color: #111111;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.companyBlock p,
+.clientBlock p {
+  margin: 0;
+  color: #111111;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.clientName {
+  margin-bottom: 1px !important;
+}
+
+.clientContact {
+  margin-top: 16px !important;
+}
+
+.linesSection {
+  margin-top: 49px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.conceptCol {
+  width: 57%;
+}
+
+.priceCol {
+  width: 15%;
+}
+
+.unitsCol {
+  width: 11%;
+}
+
+.taxCol {
+  width: 8%;
+}
+
+.totalCol {
+  width: 13%;
+}
+
+.table thead {
+  border-bottom: 1px solid var(--pdf-rule);
+}
+
+.table th {
+  padding: 0 0 11px;
+  color: #30343a;
+  font-size: 9.5px;
+  font-weight: 520;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+}
+
+.table th:first-child {
+  text-align: left;
+}
+
+.table th:not(:first-child) {
+  text-align: right;
+}
+
+.table td {
+  padding: 13px 0 10px;
+  vertical-align: top;
+  border: 0;
+  color: #111111;
+}
+
+.conceptCell {
+  padding-right: 22px !important;
+}
+
+.conceptCell strong {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
+.moneyCell,
+.unitsCell,
+.taxCell,
+.totalCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.totalCell {
+  font-weight: 560;
+}
+
+.unitSuffix {
+  color: #4c5661;
+  font-size: 10px;
+}
+
+.totals {
+  width: 49%;
+  margin: 22px 0 0 auto;
+}
+
+.totalRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 30px;
+  padding: 8px 0;
+  color: #111111;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.totalRow strong {
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.grandTotal {
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--pdf-rule);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.grandTotal strong {
+  font-size: 14px;
+}
+
+.texts {
+  margin-top: 34px;
+}
+
+.textBlock + .textBlock {
+  margin-top: 24px;
+}
+
+.textBlock h3 {
+  margin: 0 0 4px;
+  color: #111111;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.textBlock p {
+  margin: 0;
+  color: #111111;
+  font-size: 11.5px;
+  line-height: 1.52;
+  white-space: pre-line;
+}
+
+.footer {
+  margin-top: auto;
+  padding-top: 54px;
+}
+
+.footerRule {
+  height: 1px;
+  background: #5b6168;
+}
+
+.footerContent {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding-top: 22px;
+  color: #151515;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .document {
+    width: 794px;
+  }
+}
+
+@media print {
+  .document {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 13mm 11mm 9mm;
+    box-shadow: none;
+  }
+}

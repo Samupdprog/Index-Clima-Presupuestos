@@ -11,3 +11,7 @@ export function duplicateQuote(repository: QuoteRepository) {
 export function archiveQuote(repository: QuoteRepository) {
   return (input: Parameters<QuoteRepository["archiveQuote"]>[0]) => repository.archiveQuote(input);
 }
+
+export function updateQuote(repository: QuoteRepository) {
+  return (input: Parameters<QuoteRepository["update"]>[0]) => repository.update(input);
+}

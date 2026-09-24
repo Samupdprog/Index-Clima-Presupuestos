@@ -12,6 +12,8 @@ export interface QuoteRecord {
   duplicatedFromQuoteId: string | null;
   duplicateRootQuoteId: string | null;
   duplicateSequence: number | null;
+  holdedEstimateId?: string | null;
+  calculation?: unknown;
   lines: unknown[];
 }
 
@@ -30,6 +32,7 @@ export interface UpdateQuoteCommand {
   title?: string;
   clientId?: string | null;
   status?: "draft" | "ready_for_review" | "finalized" | "archived";
+  holdedEstimateId?: string;
 }
 
 export interface QuoteRepository {

@@ -272,3 +272,9 @@ export function calculateQuote(
     saleWithTax: total,
   };
 }
+
+export function resolveSaleBaseUnitPrice(mode: "net_cost" | "supplier_list_price", directUnitCost: Decimal.Value | null | undefined, supplierUnitPrice: Decimal.Value | null | undefined, discounts: SupplierDiscount[] = []): Money {
+  if (mode === "supplier_list_price") return money(supplierUnitPrice ?? 0);
+  if (directUnitCost !== null && directUnitCost !== undefined) return money(directUnitCost);
+  return applyConsecutiveDiscounts(supplierUnitPrice ?? 0, discounts);
+}

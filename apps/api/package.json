@@ -12,7 +12,8 @@
   "dependencies": {
     "@quotes/application": "0.1.0",
     "@quotes/contracts": "0.1.0",
-    "@quotes/db": "0.1.0"
+    "@quotes/db": "0.1.0",
+    "@quotes/holded": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
