@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { upsertHoldedContact, hashHoldedSnapshot, type HoldedClientContact } from "@quotes/application";
 import {
   clients,
   createClientRepository,
@@ -88,6 +89,91 @@ describe("clients repository integration", () => {
     const unchanged = await repository.getById(installationId, clientId);
     expect(unchanged?.phone).toBe("+34900111222");
     expect(unchanged?.revision).toBe(updated.revision);
+  });
+});
+
+describe("clients Holded sync integration", () => {
+  const installationId = randomUUID();
+  const { db, pool } = createDb(databaseUrl);
+  const repository = createClientRepository(db);
+
+  function contact(partial: Partial<HoldedClientContact> & { id: string }): HoldedClientContact {
+    return {
+      name: "Contacto Holded",
+      taxId: null,
+      email: null,
+      phone: null,
+      address: null,
+      isClient: true,
+      snapshot: { id: partial.id, name: partial.name ?? "Contacto Holded" },
+      ...partial,
+    };
+  }
+
+  beforeAll(async () => {
+    await db.insert(installations).values({ id: installationId, slug: `holded-${installationId}`, displayName: "Holded sync" });
+  });
+
+  afterAll(async () => {
+    await db.delete(clients).where(eq(clients.installationId, installationId));
+    await db.delete(installations).where(eq(installations.id, installationId));
+    await pool.end();
+  });
+
+  it("persists and finds a client by its stable holdedContactId", async () => {
+    const created = await repository.create({ installationId, name: "Con enlace", holdedContactId: "hld-1", syncStatus: "synced" });
+    expect(created.holdedContactId).toBe("hld-1");
+    const found = await repository.findByHoldedContactId(installationId, "hld-1");
+    expect(found?.id).toBe(created.id);
+  });
+
+  it("creates a linked local client from a new remote contact, and does not duplicate on repeat", async () => {
+    const remote = contact({ id: "hld-new", name: "Cliente remoto", taxId: "B-NEW", email: "remote@acme.test", snapshot: { id: "hld-new", name: "Cliente remoto", code: "B-NEW", email: "remote@acme.test" } });
+    const first = await upsertHoldedContact(repository, installationId, remote);
+    expect(first?.holdedContactId).toBe("hld-new");
+    expect(first?.syncStatus).toBe("synced");
+
+    // Segundo upsert con el MISMO snapshot: no-op, sin duplicar.
+    const second = await upsertHoldedContact(repository, installationId, remote);
+    expect(second?.id).toBe(first?.id);
+    const all = await db.select().from(clients).where(and(eq(clients.installationId, installationId), eq(clients.holdedContactId, "hld-new")));
+    expect(all).toHaveLength(1);
+  });
+
+  it("refreshes local fields and bumps revision when the remote contact changed", async () => {
+    const created = await repository.create({ installationId, name: "Antiguo", holdedContactId: "hld-upd", holdedPayloadHash: "stale", syncStatus: "synced" });
+    const remote = contact({ id: "hld-upd", name: "Nombre Nuevo", email: "nuevo@acme.test", snapshot: { id: "hld-upd", name: "Nombre Nuevo", email: "nuevo@acme.test" } });
+    const refreshed = await upsertHoldedContact(repository, installationId, remote);
+    expect(refreshed?.name).toBe("Nombre Nuevo");
+    expect(refreshed?.email).toBe("nuevo@acme.test");
+    expect(refreshed?.revision).toBe(created.revision + 1);
+    expect(refreshed?.holdedPayloadHash).toBe(hashHoldedSnapshot(remote.snapshot));
+  });
+
+  it("links a unique local client matched by exact NIF", async () => {
+    const local = await repository.create({ installationId, name: "Por NIF", taxId: "B-UNIQUE" });
+    const remote = contact({ id: "hld-nif", name: "Por NIF", taxId: "b-unique", snapshot: { id: "hld-nif", code: "B-UNIQUE" } });
+    const result = await upsertHoldedContact(repository, installationId, remote);
+    expect(result?.id).toBe(local.id);
+    expect(result?.holdedContactId).toBe("hld-nif");
+  });
+
+  it("does NOT auto-merge or create when the NIF is ambiguous", async () => {
+    await repository.create({ installationId, name: "Ambiguo A", taxId: "B-DUP" });
+    await repository.create({ installationId, name: "Ambiguo B", taxId: "B-DUP" });
+    const before = await db.select().from(clients).where(eq(clients.installationId, installationId));
+    const result = await upsertHoldedContact(repository, installationId, contact({ id: "hld-amb", taxId: "B-DUP", snapshot: { id: "hld-amb", code: "B-DUP" } }));
+    expect(result).toBeNull();
+    const after = await db.select().from(clients).where(eq(clients.installationId, installationId));
+    expect(after.length).toBe(before.length); // no se creó duplicado
+  });
+
+  it("records a recoverable sync error", async () => {
+    const created = await repository.create({ installationId, name: "Con error", holdedContactId: "hld-err", syncStatus: "synced" });
+    await repository.markSyncError(installationId, created.id, "holded down");
+    const found = await repository.getById(installationId, created.id);
+    expect(found?.syncStatus).toBe("error");
+    expect(found?.syncError).toBe("holded down");
   });
 });
 
