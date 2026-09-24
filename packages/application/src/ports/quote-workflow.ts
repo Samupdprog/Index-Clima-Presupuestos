@@ -1,4 +1,6 @@
 export interface QuoteWorkflowRepository {
+  createLineWithDetails(input: Record<string, unknown>): Promise<unknown>;
+  updateLineDetails(input: Record<string, unknown>): Promise<unknown>;
   addLine(input: Record<string, unknown>): Promise<unknown>;
   addSupplierDiscount(installationId: string, quoteId: string, quoteLineId: string, expectedRevision: number, percentage: string): Promise<unknown>;
   addLaborEntry(installationId: string, quoteId: string, quoteLineId: string, expectedRevision: number, entry: Record<string, unknown>): Promise<unknown>;

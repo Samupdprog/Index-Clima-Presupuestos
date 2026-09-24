@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@quotes/contracts": "^0.1.0",
+    "@quotes/domain": "^0.1.0",
     "lucide-react": "^1.47.0",
     "motion": "^13.4.2",
     "next": "^16.0.0",

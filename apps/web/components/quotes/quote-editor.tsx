@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { DropdownMenu } from "radix-ui";
 import { ReviewDocument } from "./review-document";
-import { AnimatePresence, motion, Reorder, useDragControls, useReducedMotion } from "motion/react";
+import { ConceptWorkspace } from "./editor/concept-workspace";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -12,7 +13,6 @@ import {
   ArrowRight,
   ArrowUp,
   Bot,
-  BriefcaseBusiness,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -23,19 +23,15 @@ import {
   GripVertical,
   LoaderCircle,
   MoreHorizontal,
-  Package,
-  PencilLine,
   Plus,
   Settings2,
   Sparkles,
   Trash2,
-  Truck,
   UserRound,
-  Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { QuoteCommand } from "@quotes/contracts";
-import { Dialog, DialogClose, DialogContent, Sheet, SheetClose, SheetContent } from "../animate-ui/overlay";
+import { Dialog, DialogClose, DialogContent } from "../animate-ui/overlay";
 import { RippleButton } from "../animate-ui/ripple-button";
 import { OriginBadge, StatusBadge } from "../ui/badges";
 import { ErrorState, RevisionConflictDialog, ToastViewport, useToasts } from "../ui/feedback";
@@ -44,7 +40,6 @@ import { api, ApiError } from "../../lib/api/client";
 import type {
   CalculatedLine,
   EmployeeRecord,
-  LineType,
   MaterialRecord,
   QuoteLine,
   QuoteRecord,
@@ -56,6 +51,8 @@ import { formatMoney, formatNumber } from "../../lib/format";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 type WorkflowStep = 1 | 2 | 3 | 4 | 5;
+
+type Execute = (command: QuoteCommand, successMessage?: string) => Promise<QuoteRecord>;
 
 type AiLineDraft = {
   id: string;
@@ -70,15 +67,6 @@ type AiLineDraft = {
   saleUnitPrice: string;
   igicRate: string;
   discounts: string[];
-};
-
-const lineLabels: Record<LineType, string> = {
-  material: "Material",
-  labor: "Mano de obra",
-  travel: "Desplazamiento",
-  other: "Otro",
-  adjustment: "Ajuste",
-  title: "Título",
 };
 
 function editableDecimal(value: string | null | undefined) {
@@ -103,8 +91,6 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
-  const [addType, setAddType] = useState<LineType | null>(null);
-  const [advancedLine, setAdvancedLine] = useState<QuoteLine | null>(null);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [textOpen, setTextOpen] = useState(false);
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>(1);
@@ -133,10 +119,6 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
   }, [quoteId, searchParams]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => {
-    if (advancedLine && quote) setAdvancedLine(quote.lines.find((line) => line.id === advancedLine.id) ?? null);
-  }, [quote]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const refreshQuote = useCallback(async () => {
     const current = await api.getQuote(quoteId); setQuote(current); return current;
   }, [quoteId]);
@@ -173,7 +155,6 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
   async function deleteLine(line: QuoteLine) {
     if (!quote || readOnly) return;
     await execute({ type: "deleteQuoteLine", expectedRevision: quote.revision, lineId: line.id }, "Línea eliminada");
-    setAdvancedLine(null);
   }
 
   async function exportToHolded() {
@@ -269,37 +250,44 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
         <motion.div key={workflowStep} className="workflow-stage" initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduceMotion ? 0 : -5 }} transition={{ duration: reduceMotion ? 0 : .2 }}>
           {workflowStep === 1 ? <ClientStep quote={quote} onNext={() => setWorkflowStep(2)} /> : null}
           {workflowStep === 2 ? <AiImportStep readOnly={readOnly} onImport={importAiLines} onBack={() => setWorkflowStep(1)} onSkip={() => setWorkflowStep(3)} /> : null}
-          {workflowStep === 3 ? <><div className="stage-heading"><div><p className="eyebrow">Paso 3 de 5</p><h2>Construye los conceptos</h2><p>Añade lo habitual con formularios breves. Los detalles avanzados siguen disponibles cuando los necesites.</p></div><RippleButton variant="secondary" onClick={() => setWorkflowStep(2)}><Bot />Añadir oferta con IA</RippleButton></div><div className="editor-grid">
-        <div>
-          <section className="panel workspace-panel" aria-labelledby="quote-lines-title">
-            <div className="workspace-toolbar"><h2 id="quote-lines-title">Líneas del presupuesto <span style={{ color: "var(--foreground-soft)", fontWeight: 500 }}>· {quote.lines.length}</span></h2>
-              <div className="add-line-actions">
-                <RippleButton variant="secondary" size="sm" disabled={readOnly} onClick={() => setAddType("material")}><Package />Material</RippleButton>
-                <RippleButton variant="secondary" size="sm" disabled={readOnly} onClick={() => setAddType("labor")}><BriefcaseBusiness />Mano de obra</RippleButton>
-                <RippleButton variant="secondary" size="sm" disabled={readOnly} onClick={() => setAddType("travel")}><Truck />Desplazamiento</RippleButton>
-                <RippleButton variant="ghost" size="sm" disabled={readOnly} onClick={() => setAddType("other")}><Plus />Otro</RippleButton>
+          {workflowStep === 3 ? <>
+            <div className="stage-heading">
+              <div>
+                <p className="eyebrow">Paso 3 de 5</p>
+                <h2>Construye los conceptos</h2>
+                <p>Añade, revisa y corrige líneas sin salir de esta pantalla. Haz doble clic sobre cantidades o importes para editarlos rápidamente.</p>
               </div>
+              <RippleButton variant="secondary" onClick={() => setWorkflowStep(2)}><Bot />Añadir oferta con IA</RippleButton>
             </div>
-            {quote.lines.length ? (
-              <Reorder.Group axis="y" values={quote.lines} onReorder={(ordered) => { if (!readOnly) setQuote({ ...quote, lines: ordered }); }} className="quote-lines" style={{ listStyle: "none", margin: 0 }}>
-                {quote.lines.map((line, index) => <QuoteLineRow key={line.id} line={line} calculation={calculationByLine.get(line.id)} readOnly={readOnly} onCommit={(changes) => void updateLine(line, changes)} onAdvanced={() => setAdvancedLine(line)} onDelete={() => void deleteLine(line)} onMove={(direction) => moveLine(line, direction)} onDragEnd={() => void reorderLines(quote.lines)} first={index === 0} last={index === quote.lines.length - 1} />)}
-              </Reorder.Group>
-            ) : <div className="lines-empty"><div><Wrench /><div><strong>Añade el primer concepto</strong><br /><span>Material, mano de obra, desplazamiento u otro.</span></div></div></div>}
-          </section>
-          <section className="panel texts-section">
-            <div className="section-heading"><h2>Textos del presupuesto</h2><RippleButton variant="ghost" size="sm" disabled={readOnly} onClick={() => setTextOpen(true)}><Plus />Añadir texto</RippleButton></div>
-            {quote.texts?.length ? <div className="text-blocks">{quote.texts.map((text, index) => <div className="text-block" key={text.id}><GripVertical style={{ width: 16, color: "var(--foreground-soft)", marginTop: 2 }} /><div><h3>{text.title || "Sin título"}</h3><p>{text.body}</p></div><DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="button button-ghost button-icon" aria-label="Acciones del texto"><MoreHorizontal /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="dropdown-content" align="end"><DropdownMenu.Item className="dropdown-item" disabled={index === 0} onSelect={() => void reorderTexts(quote, text.id, -1, execute)}><ArrowUp />Subir</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item" disabled={index === (quote.texts?.length ?? 0) - 1} onSelect={() => void reorderTexts(quote, text.id, 1, execute)}><ArrowDown />Bajar</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item danger" onSelect={() => void execute({ type: "removeQuoteText", expectedRevision: quote.revision, textId: text.id }, "Texto eliminado")}><Trash2 />Eliminar</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div>)}</div> : <div style={{ padding: 20, color: "var(--foreground-muted)", fontSize: 12 }}>Añade condiciones, garantías o protección de datos para incluirlos en la revisión.</div>}
-          </section>
-        </div>
-        <QuoteSummary quote={quote} onAdjust={() => setAdjustOpen(true)} readOnly={readOnly} />
-      </div><WorkflowFooter backLabel="Preparación" onBack={() => setWorkflowStep(2)} nextLabel="Revisar precio final" onNext={() => setWorkflowStep(4)} nextDisabled={quote.lines.length === 0} /></> : null}
+
+            <ConceptWorkspace
+              quote={quote}
+              materials={materials}
+              employees={employees}
+              travels={travels}
+              calculations={calculationByLine}
+              readOnly={readOnly}
+              execute={execute}
+              onOptimisticReorder={(ordered) => setQuote({ ...quote, lines: ordered })}
+              onReorder={reorderLines}
+              onReviewPrice={() => setWorkflowStep(4)}
+            />
+
+            <section className="panel texts-section">
+              <div className="section-heading">
+                <h2>Textos del presupuesto</h2>
+                <RippleButton variant="ghost" size="sm" disabled={readOnly} onClick={() => setTextOpen(true)}><Plus />Añadir texto</RippleButton>
+              </div>
+              {quote.texts?.length ? <div className="text-blocks">{quote.texts.map((text, index) => <div className="text-block" key={text.id}><GripVertical style={{ width: 16, color: "var(--foreground-soft)", marginTop: 2 }} /><div><h3>{text.title || "Sin título"}</h3><p>{text.body}</p></div><DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="button button-ghost button-icon" aria-label="Acciones del texto"><MoreHorizontal /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="dropdown-content" align="end"><DropdownMenu.Item className="dropdown-item" disabled={index === 0} onSelect={() => void reorderTexts(quote, text.id, -1, execute)}><ArrowUp />Subir</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item" disabled={index === (quote.texts?.length ?? 0) - 1} onSelect={() => void reorderTexts(quote, text.id, 1, execute)}><ArrowDown />Bajar</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item danger" onSelect={() => void execute({ type: "removeQuoteText", expectedRevision: quote.revision, textId: text.id }, "Texto eliminado")}><Trash2 />Eliminar</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div>)}</div> : <div style={{ padding: 20, color: "var(--foreground-muted)", fontSize: 12 }}>Añade condiciones, garantías o protección de datos para incluirlos en la revisión.</div>}
+            </section>
+
+            <WorkflowFooter backLabel="Preparación" onBack={() => setWorkflowStep(2)} nextLabel="Revisar precio final" onNext={() => setWorkflowStep(4)} nextDisabled={quote.lines.length === 0} />
+          </> : null}
           {workflowStep === 4 ? <PriceStep quote={quote} readOnly={readOnly} onAdjust={() => setAdjustOpen(true)} onBack={() => setWorkflowStep(3)} onNext={() => setWorkflowStep(5)} /> : null}
           {workflowStep === 5 ? <ReviewStep quote={quote} calculations={calculationByLine} readOnly={readOnly} onAddText={() => setTextOpen(true)} onBack={() => setWorkflowStep(4)} onSave={() => execute({ type: "changeQuoteStatus", expectedRevision: quote.revision, status: "finalized" }, "Presupuesto guardado como finalizado")} onExport={exportToHolded} /> : null}
         </motion.div>
       </AnimatePresence>
 
-      <AddLineSheet open={Boolean(addType)} onOpenChange={(open) => { if (!open) setAddType(null); }} type={addType ?? "other"} quote={quote} materials={materials} employees={employees} travels={travels} execute={execute} refreshQuote={refreshQuote} />
-      <AdvancedLineSheet line={advancedLine} quote={quote} calculation={advancedLine ? calculationByLine.get(advancedLine.id) : undefined} employees={employees} open={Boolean(advancedLine)} onOpenChange={(open) => { if (!open) setAdvancedLine(null); }} execute={execute} readOnly={readOnly} />
       <AdjustmentDialog open={adjustOpen} onOpenChange={setAdjustOpen} quote={quote} execute={execute} />
       <AddTextDialog open={textOpen} onOpenChange={setTextOpen} quote={quote} templates={templates} execute={execute} />
       <RevisionConflictDialog open={conflict} onOpenChange={setConflict} onReload={() => { setConflict(false); void load(); }} />
@@ -441,6 +429,100 @@ function WorkflowFooter({ backLabel, nextLabel, onBack, onNext, nextDisabled = f
   return <div className="workflow-footer"><button type="button" className="button button-ghost" onClick={onBack}><ArrowLeft />{backLabel}</button><RippleButton onClick={onNext} disabled={nextDisabled}>{nextLabel}<ArrowRight /></RippleButton></div>;
 }
 
+function QuoteSummary({
+  quote,
+  onAdjust,
+  readOnly,
+}: {
+  quote: QuoteRecord;
+  onAdjust: () => void;
+  readOnly: boolean;
+}) {
+  const calculation = quote.calculation;
+  const negative = Number(calculation?.profit ?? 0) < 0;
+
+  return (
+    <aside className="panel summary" aria-label="Resumen económico">
+      <div className="summary-header">
+        <h2>Resumen económico</h2>
+      </div>
+
+      <div className="summary-body">
+        <div className="summary-row">
+          <span>Coste</span>
+          <strong>{formatMoney(calculation?.cost)}</strong>
+        </div>
+
+        <div className="summary-row">
+          <span>Venta sin IGIC</span>
+          <strong>{formatMoney(calculation?.saleWithoutTax)}</strong>
+        </div>
+
+        <div className="summary-row">
+          <span>IGIC</span>
+          <strong>{formatMoney(calculation?.taxTotal)}</strong>
+        </div>
+
+        <div className="summary-divider" />
+
+        <div className="summary-row summary-total">
+          <span>Total</span>
+          <strong>{formatMoney(calculation?.saleWithTax)}</strong>
+        </div>
+
+        <div className="summary-divider" />
+
+        <div className={`summary-row summary-profit${negative ? " negative" : ""}`}>
+          <span>Beneficio</span>
+          <strong>{formatMoney(calculation?.profit)}</strong>
+        </div>
+
+        <div className="summary-row">
+          <span>Beneficio / coste</span>
+          <strong>
+            {calculation?.profitOnCostPct
+              ? `${formatNumber(calculation.profitOnCostPct)} %`
+              : "No disponible"}
+          </strong>
+        </div>
+
+        <div className="summary-row">
+          <span>Margen / venta</span>
+          <strong>
+            {calculation?.marginOnSalePct
+              ? `${formatNumber(calculation.marginOnSalePct)} %`
+              : "No disponible"}
+          </strong>
+        </div>
+
+        {negative ? (
+          <div className="notice notice-danger" style={{ marginTop: 10 }}>
+            <AlertTriangle />
+            <span>
+              El presupuesto tiene beneficio negativo. Puedes continuar, pero
+              conviene revisarlo.
+            </span>
+          </div>
+        ) : null}
+
+        <RippleButton
+          variant="secondary"
+          style={{ width: "100%", marginTop: 16 }}
+          onClick={onAdjust}
+          disabled={readOnly || quote.lines.length === 0}
+        >
+          <CircleDollarSign />
+          Ajustar precio
+        </RippleButton>
+
+        <p className="summary-note">
+          Todos los importes proceden del cálculo confirmado por el servidor.
+        </p>
+      </div>
+    </aside>
+  );
+}
+
 function PriceStep({ quote, readOnly, onAdjust, onBack, onNext }: { quote: QuoteRecord; readOnly: boolean; onAdjust: () => void; onBack: () => void; onNext: () => void }) {
   return <section aria-labelledby="price-step-title"><div className="stage-heading"><div><p className="eyebrow">Paso 4 de 5</p><h2 id="price-step-title">Confirma el precio final</h2><p>Primero mira el resultado del servidor. Ajusta solo si el importe comercial necesita cambiar.</p></div></div><div className="price-step-grid"><div className="guided-card price-decision"><span className="guided-icon"><CircleDollarSign /></span><h3>¿El precio final te parece bien?</h3><p>Si está correcto, pasa a la revisión del documento. Si quieres modificarlo, el ajuste quedará registrado y el motor recalculará el total.</p><div className="decision-actions"><RippleButton onClick={onNext}>Sí, revisar presupuesto<ArrowRight /></RippleButton><RippleButton variant="secondary" onClick={onAdjust} disabled={readOnly}><Settings2 />Quiero ajustar el precio</RippleButton></div><div className="notice"><CheckCircle2 /><span>Todos los importes de este paso proceden del último cálculo confirmado por el backend.</span></div></div><QuoteSummary quote={quote} onAdjust={onAdjust} readOnly={readOnly} /></div><WorkflowFooter backLabel="Conceptos" onBack={onBack} nextLabel="Revisar documento" onNext={onNext} /></section>;
 }
@@ -464,112 +546,6 @@ function statusLabel(status: QuoteStatus) {
 function SaveIndicator({ state }: { state: SaveState }) {
   if (state === "idle") return null;
   return <span className="save-status">{state === "saving" ? <LoaderCircle className="spin" /> : state === "saved" ? <Check /> : <AlertTriangle />} {state === "saving" ? "Guardando…" : state === "saved" ? "Guardado" : "Error al guardar"}</span>;
-}
-
-function QuoteLineRow({ line, calculation, readOnly, onCommit, onAdvanced, onDelete, onMove, onDragEnd, first, last }: { line: QuoteLine; calculation: CalculatedLine | undefined; readOnly: boolean; onCommit: (changes: Record<string, unknown>) => void; onAdvanced: () => void; onDelete: () => void; onMove: (direction: -1 | 1) => void; onDragEnd: () => void; first: boolean; last: boolean }) {
-  const dragControls = useDragControls();
-  const [description, setDescription] = useState(line.description);
-  const [quantity, setQuantity] = useState(editableDecimal(line.quantity));
-  const [price, setPrice] = useState(editableDecimal(line.saleRuleValue));
-  const [igic, setIgic] = useState(normalizedRate(line.igicRate));
-  useEffect(() => { setDescription(line.description); setQuantity(editableDecimal(line.quantity)); setPrice(editableDecimal(line.saleRuleValue)); setIgic(normalizedRate(line.igicRate)); }, [line]);
-  const commit = (key: string, value: string, original: string) => { if (!readOnly && value !== original) onCommit({ [key]: value }); };
-  return (
-    <Reorder.Item value={line} as="li" className="quote-line" layout dragListener={false} dragControls={dragControls} transition={{ type: "spring", stiffness: 420, damping: 38 }}>
-      <button className="drag-handle" disabled={readOnly} aria-label={`Reordenar ${line.description}`} title="Arrastra para ordenar. Usa el menú para mover con teclado." onPointerDown={(event) => dragControls.start(event)} onPointerUp={onDragEnd}><GripVertical /></button>
-      <div className="line-main"><span className="line-type">{lineLabels[line.type]}</span><input className="line-description" value={description} disabled={readOnly} onChange={(event) => setDescription(event.target.value)} onBlur={() => commit("description", description, line.description)} aria-label="Descripción" />{line.laborEntries.length ? <div className="labor-chips">{line.laborEntries.map((entry) => <span className="labor-chip" key={entry.id}>{entry.employeeNameSnapshot} · {formatNumber(entry.hours)} h</span>)}</div> : null}</div>
-      <div className="line-cell"><label htmlFor={`quantity-${line.id}`}>{line.type === "labor" ? "Empleados" : `Cantidad · ${line.unit}`}</label>{line.type === "labor" ? <span>{line.laborEntries.length}</span> : <input id={`quantity-${line.id}`} className="line-input" value={quantity} disabled={readOnly} inputMode="decimal" onChange={(event) => setQuantity(event.target.value)} onBlur={() => commit("quantity", quantity, line.quantity)} />}</div>
-      <div className="line-cell"><label htmlFor={`price-${line.id}`}>{line.type === "labor" ? "Horas" : "Precio"}</label>{line.type === "labor" ? <span className="money">{formatNumber(line.laborEntries.reduce((sum, entry) => sum + Number(entry.hours), 0))}</span> : <input id={`price-${line.id}`} className="line-input" value={price} disabled={readOnly} inputMode="decimal" onChange={(event) => setPrice(event.target.value)} onBlur={() => commit("saleRuleValue", price, line.saleRuleValue)} />}</div>
-      <div className="line-cell"><label htmlFor={`igic-${line.id}`}>IGIC</label><select id={`igic-${line.id}`} className="line-input" value={igic} disabled={readOnly} onChange={(event) => { setIgic(event.target.value); commit("igicRate", event.target.value, line.igicRate); }}><option value="0">0 %</option><option value="3">3 %</option><option value="7">7 %</option><option value="15">15 %</option></select></div>
-      <div className="line-cell"><label>Venta con IGIC</label><div className="line-output">{formatMoney(calculation?.finalSaleWithTax)}</div><div className={`line-profit${Number(calculation?.profit ?? 0) < 0 ? " negative" : ""}`}>{formatMoney(calculation?.profit)} beneficio</div></div>
-      <DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="button button-ghost button-icon line-menu" aria-label={`Acciones de ${line.description}`}><MoreHorizontal /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="dropdown-content" align="end" sideOffset={5}><DropdownMenu.Item className="dropdown-item" onSelect={onAdvanced}><Settings2 />Detalles avanzados</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item" disabled={first || readOnly} onSelect={() => onMove(-1)}><ArrowUp />Subir línea</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item" disabled={last || readOnly} onSelect={() => onMove(1)}><ArrowDown />Bajar línea</DropdownMenu.Item><DropdownMenu.Separator style={{ height: 1, background: "var(--border)", margin: 4 }} /><DropdownMenu.Item className="dropdown-item danger" disabled={readOnly} onSelect={onDelete}><Trash2 />Eliminar</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
-    </Reorder.Item>
-  );
-}
-
-function QuoteSummary({ quote, onAdjust, readOnly }: { quote: QuoteRecord; onAdjust: () => void; readOnly: boolean }) {
-  const calculation = quote.calculation;
-  const negative = Number(calculation?.profit ?? 0) < 0;
-  return <aside className="panel summary" aria-label="Resumen económico"><div className="summary-header"><h2>Resumen económico</h2></div><div className="summary-body">
-    <div className="summary-row"><span>Coste</span><strong>{formatMoney(calculation?.cost)}</strong></div>
-    <div className="summary-row"><span>Venta sin IGIC</span><strong>{formatMoney(calculation?.saleWithoutTax)}</strong></div>
-    <div className="summary-row"><span>IGIC</span><strong>{formatMoney(calculation?.taxTotal)}</strong></div><div className="summary-divider" />
-    <div className="summary-row summary-total"><span>Total</span><strong>{formatMoney(calculation?.saleWithTax)}</strong></div><div className="summary-divider" />
-    <div className={`summary-row summary-profit${negative ? " negative" : ""}`}><span>Beneficio</span><strong>{formatMoney(calculation?.profit)}</strong></div>
-    <div className="summary-row"><span>Beneficio / coste</span><strong>{calculation?.profitOnCostPct ? `${formatNumber(calculation.profitOnCostPct)} %` : "No disponible"}</strong></div>
-    <div className="summary-row"><span>Margen / venta</span><strong>{calculation?.marginOnSalePct ? `${formatNumber(calculation.marginOnSalePct)} %` : "No disponible"}</strong></div>
-    {negative ? <div className="notice notice-danger" style={{ marginTop: 10 }}><AlertTriangle /><span>El presupuesto tiene beneficio negativo. Puedes continuar, pero conviene revisarlo.</span></div> : null}
-    <RippleButton variant="secondary" style={{ width: "100%", marginTop: 16 }} onClick={onAdjust} disabled={readOnly || quote.lines.length === 0}><CircleDollarSign />Ajustar precio</RippleButton>
-    <p className="summary-note">Todos los importes proceden del cálculo confirmado por el servidor.</p>
-  </div></aside>;
-}
-
-type Execute = (command: QuoteCommand, successMessage?: string) => Promise<QuoteRecord>;
-
-function AddLineSheet({ open, onOpenChange, type, quote, materials, employees, travels, execute, refreshQuote }: { open: boolean; onOpenChange: (open: boolean) => void; type: LineType; quote: QuoteRecord; materials: MaterialRecord[]; employees: EmployeeRecord[]; travels: TravelRecord[]; execute: Execute; refreshQuote: () => Promise<QuoteRecord> }) {
-  const [description, setDescription] = useState(""); const [quantity, setQuantity] = useState("1"); const [unit, setUnit] = useState("ud"); const [price, setPrice] = useState(""); const [cost, setCost] = useState(""); const [igic, setIgic] = useState("7"); const [catalogId, setCatalogId] = useState(""); const [employeeId, setEmployeeId] = useState(""); const [hours, setHours] = useState("1"); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  useEffect(() => { if (open) { setDescription(""); setQuantity("1"); setUnit(type === "travel" ? "km" : "ud"); setPrice(""); setCost(""); setIgic("7"); setCatalogId(""); setEmployeeId(""); setHours("1"); setError(""); } }, [open, type]);
-  function chooseCatalog(id: string) {
-    setCatalogId(id);
-    if (type === "material") { const item = materials.find((record) => record.id === id); if (item) { setDescription(item.name); setUnit(item.unit); setPrice(editableDecimal(item.saleUnitPrice)); setCost(editableDecimal(item.supplierUnitPrice)); setIgic(normalizedRate(item.igicRate)); } }
-    if (type === "travel") { const item = travels.find((record) => record.id === id); if (item) { setDescription(item.name); setUnit(item.unit); setPrice(editableDecimal(item.saleUnitPrice)); setCost(editableDecimal(item.costUnitPrice)); setIgic(normalizedRate(item.igicRate)); } }
-    if (type === "labor") { setEmployeeId(id); const item = employees.find((record) => record.id === id); if (item) { setDescription(description || "Mano de obra"); setPrice(editableDecimal(item.saleRate)); setCost(editableDecimal(item.costRate)); setIgic(normalizedRate(item.defaultIgicRate)); } }
-  }
-  async function submit(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError("");
-    try {
-      const common = { expectedRevision: quote.revision, description: description.trim(), saleRule: "unit_price" as const, saleRuleValue: price || "0", quantity, igicRate: igic };
-      if (type === "material") await execute({ type: "addMaterialLine", ...common, ...(catalogId ? { catalogMaterialId: catalogId } : {}), ...(cost ? { directUnitCost: cost, supplierUnitPrice: cost } : {}), ...(price ? { baseUnitPrice: price } : {}) }, "Material añadido");
-      else if (type === "labor") {
-        await execute({ type: "addLaborLine", ...common, saleRuleValue: "0", quantity: "1" });
-        const current = await refreshQuote(); const line = [...current.lines].reverse().find((item) => item.type === "labor"); const employee = employees.find((item) => item.id === employeeId);
-        if (line && employee) await execute({ type: "addLaborEntry", expectedRevision: current.revision, quoteLineId: line.id, employeeNameSnapshot: employee.name, hours, costRateSnapshot: employee.costRate, saleRateSnapshot: employee.saleRate }, "Mano de obra añadida");
-      } else if (type === "travel") {
-        await execute({ type: "addTravelLine", ...common }, "Desplazamiento añadido");
-        if (cost || unit !== "unit") { const current = await refreshQuote(); const line = [...current.lines].reverse().find((item) => item.type === "travel"); if (line) await execute({ type: "updateQuoteLine", expectedRevision: current.revision, lineId: line.id, changes: { unit, directUnitCost: cost || "0" } }); }
-      } else await execute({ type: "addOtherLine", ...common }, "Concepto añadido");
-      onOpenChange(false);
-    } catch { setError("No se pudo añadir la línea. Comprueba los valores."); }
-    finally { setBusy(false); }
-  }
-  const title = `Añadir ${lineLabels[type].toLowerCase()}`;
-  return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent title={title} description="Completa lo esencial. Los detalles internos se pueden ajustar después." footer={<><SheetClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></SheetClose><RippleButton type="submit" form="add-line-form" disabled={busy || !description.trim() || (type === "labor" && !employeeId)}>{busy ? "Añadiendo…" : "Añadir línea"}</RippleButton></>}>
-    <form id="add-line-form" onSubmit={submit} className="form-grid">
-      {type === "material" ? <div className="field span-2"><label className="field-label" htmlFor="material-catalog">Material del catálogo (opcional)</label><SearchableSelect id="material-catalog" value={catalogId} onChange={chooseCatalog} placeholder="Escribe nombre, proveedor o código…" clearLabel="Escribir material manualmente" options={materials.filter((item) => item.active).map((item) => ({ value: item.id, label: item.name, description: [item.supplierNameSnapshot, item.supplierCode].filter(Boolean).join(" · ") || `${item.unit} · ${formatMoney(item.saleUnitPrice)}`, keywords: item.description ?? "" }))} /></div> : null}
-      {type === "travel" ? <div className="field span-2"><label className="field-label" htmlFor="travel-catalog">Desplazamiento guardado (opcional)</label><SearchableSelect id="travel-catalog" value={catalogId} onChange={chooseCatalog} placeholder="Escribe para buscar un desplazamiento…" clearLabel="Escribir desplazamiento manualmente" options={travels.filter((item) => item.active).map((item) => ({ value: item.id, label: item.name, description: `${item.unit} · ${formatMoney(item.saleUnitPrice)}`, keywords: item.description ?? "" }))} /></div> : null}
-      {type === "labor" ? <div className="field span-2"><label className="field-label" htmlFor="employee">Empleado</label><SearchableSelect id="employee" value={employeeId} onChange={chooseCatalog} required allowClear={false} placeholder="Escribe para buscar un empleado…" options={employees.filter((item) => item.active).map((item) => ({ value: item.id, label: item.name, description: `${formatMoney(item.saleRate)}/h venta · ${formatMoney(item.costRate)}/h coste` }))} /></div> : null}
-      <div className="field span-2"><label className="field-label" htmlFor="line-description">Descripción comercial</label><input id="line-description" className="input" value={description} onChange={(event) => setDescription(event.target.value)} placeholder={type === "labor" ? "Mano de obra instalación" : "Descripción para el cliente"} autoFocus={type === "other"} required /></div>
-      {type === "labor" ? <div className="field"><label className="field-label" htmlFor="labor-hours">Horas</label><input id="labor-hours" className="input" value={hours} onChange={(event) => setHours(event.target.value)} inputMode="decimal" required /></div> : <><div className="field"><label className="field-label" htmlFor="line-quantity">Cantidad</label><input id="line-quantity" className="input" value={quantity} onChange={(event) => setQuantity(event.target.value)} inputMode="decimal" required /></div><div className="field"><label className="field-label" htmlFor="line-unit">Unidad</label><input id="line-unit" className="input" value={unit} onChange={(event) => setUnit(event.target.value)} /></div></>}
-      <div className="field"><label className="field-label" htmlFor="line-price">{type === "labor" ? "Venta habitual / h" : "Precio de venta / unidad"}</label><input id="line-price" className="input" value={price} onChange={(event) => setPrice(event.target.value)} inputMode="decimal" required={type !== "labor"} disabled={type === "labor"} /></div>
-      {(type === "material" || type === "travel" || type === "labor") ? <div className="field"><label className="field-label" htmlFor="line-cost">{type === "labor" ? "Coste habitual / h" : "Coste / unidad"}</label><input id="line-cost" className="input" value={cost} onChange={(event) => setCost(event.target.value)} inputMode="decimal" disabled={type === "labor"} /></div> : null}
-      <div className="field"><label className="field-label" htmlFor="line-igic">IGIC</label><select id="line-igic" className="select" value={igic} onChange={(event) => setIgic(event.target.value)}><option value="0">0 %</option><option value="3">3 %</option><option value="7">7 %</option><option value="15">15 %</option></select></div>
-      {error ? <p className="error-text span-2" role="alert">{error}</p> : null}
-    </form>
-  </SheetContent></Sheet>;
-}
-
-function AdvancedLineSheet({ line, quote, calculation, employees, open, onOpenChange, execute, readOnly }: { line: QuoteLine | null; quote: QuoteRecord; calculation: CalculatedLine | undefined; employees: EmployeeRecord[]; open: boolean; onOpenChange: (open: boolean) => void; execute: Execute; readOnly: boolean }) {
-  const [form, setForm] = useState<Record<string, string>>({}); const [discount, setDiscount] = useState(""); const [employeeId, setEmployeeId] = useState(""); const [hours, setHours] = useState("1"); const [busy, setBusy] = useState(false);
-  useEffect(() => { if (line) setForm({ description: line.description, quantity: editableDecimal(line.quantity), unit: line.unit, igicRate: normalizedRate(line.igicRate), saleRule: line.saleRule, saleRuleValue: editableDecimal(line.saleRuleValue), baseUnitPrice: editableDecimal(line.baseUnitPrice), directUnitCost: editableDecimal(line.directUnitCost), supplierUnitPrice: editableDecimal(line.supplierUnitPrice), internalReference: line.internalReference ?? "", internalNotes: line.internalNotes ?? "" }); }, [line]);
-  if (!line) return <Sheet open={false}><></></Sheet>;
-  const lineId = line.id;
-  const set = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
-  async function save(event: FormEvent) { event.preventDefault(); setBusy(true); try { await execute({ type: "updateQuoteLine", expectedRevision: quote.revision, lineId, changes: form }, "Detalles actualizados"); onOpenChange(false); } finally { setBusy(false); } }
-  async function addDiscount() { if (!discount) return; setBusy(true); try { await execute({ type: "addSupplierDiscount", expectedRevision: quote.revision, quoteLineId: lineId, percentage: discount }, "Descuento añadido"); setDiscount(""); } finally { setBusy(false); } }
-  async function addEmployee() { const employee = employees.find((item) => item.id === employeeId); if (!employee) return; setBusy(true); try { await execute({ type: "addLaborEntry", expectedRevision: quote.revision, quoteLineId: lineId, employeeNameSnapshot: employee.name, hours, costRateSnapshot: employee.costRate, saleRateSnapshot: employee.saleRate }, "Empleado añadido"); setEmployeeId(""); } finally { setBusy(false); } }
-  return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent title="Detalles de la línea" description={`${lineLabels[line.type]} · información económica e interna`} footer={<><SheetClose asChild><RippleButton variant="secondary">Cerrar</RippleButton></SheetClose>{!readOnly ? <RippleButton type="submit" form="advanced-line-form" disabled={busy}>{busy ? "Guardando…" : "Guardar cambios"}</RippleButton> : null}</>}>
-    <form id="advanced-line-form" onSubmit={save} className="form-grid">
-      <div className="field span-2"><label className="field-label" htmlFor="advanced-description">Descripción</label><input id="advanced-description" className="input" value={form.description ?? ""} onChange={(event) => set("description", event.target.value)} disabled={readOnly} /></div>
-      <div className="field"><label className="field-label" htmlFor="advanced-quantity">Cantidad</label><input id="advanced-quantity" className="input" value={form.quantity ?? ""} onChange={(event) => set("quantity", event.target.value)} disabled={readOnly} /></div><div className="field"><label className="field-label" htmlFor="advanced-unit">Unidad</label><input id="advanced-unit" className="input" value={form.unit ?? ""} onChange={(event) => set("unit", event.target.value)} disabled={readOnly} /></div>
-      <div className="field"><label className="field-label" htmlFor="advanced-sale-rule">Regla de venta</label><select id="advanced-sale-rule" className="select" value={form.saleRule ?? "unit_price"} onChange={(event) => set("saleRule", event.target.value)} disabled={readOnly}><option value="unit_price">Precio unitario</option><option value="fixed_line_total">Total fijo de línea</option><option value="add_euros_per_unit">Sumar € / unidad</option><option value="add_percentage">Añadir porcentaje</option></select></div><div className="field"><label className="field-label" htmlFor="advanced-rule-value">Valor de la regla</label><input id="advanced-rule-value" className="input" value={form.saleRuleValue ?? ""} onChange={(event) => set("saleRuleValue", event.target.value)} disabled={readOnly} /></div>
-      {line.type !== "labor" ? <><div className="field"><label className="field-label" htmlFor="advanced-direct-cost">Coste directo / ud.</label><input id="advanced-direct-cost" className="input" value={form.directUnitCost ?? ""} onChange={(event) => set("directUnitCost", event.target.value)} disabled={readOnly} /></div><div className="field"><label className="field-label" htmlFor="advanced-supplier-price">PVP proveedor / ud.</label><input id="advanced-supplier-price" className="input" value={form.supplierUnitPrice ?? ""} onChange={(event) => set("supplierUnitPrice", event.target.value)} disabled={readOnly} /></div><div className="field"><label className="field-label" htmlFor="advanced-base-price">Precio base / ud.</label><input id="advanced-base-price" className="input" value={form.baseUnitPrice ?? ""} onChange={(event) => set("baseUnitPrice", event.target.value)} disabled={readOnly} /></div></> : null}
-      <div className="field"><label className="field-label" htmlFor="advanced-igic">IGIC</label><select id="advanced-igic" className="select" value={form.igicRate ?? "7"} onChange={(event) => set("igicRate", event.target.value)} disabled={readOnly}><option value="0">0 %</option><option value="3">3 %</option><option value="7">7 %</option><option value="15">15 %</option></select></div>
-      <div className="field"><label className="field-label" htmlFor="advanced-reference">Referencia interna</label><input id="advanced-reference" className="input" value={form.internalReference ?? ""} onChange={(event) => set("internalReference", event.target.value)} disabled={readOnly} /></div><div className="field span-2"><label className="field-label" htmlFor="advanced-notes">Notas internas</label><textarea id="advanced-notes" className="textarea" value={form.internalNotes ?? ""} onChange={(event) => set("internalNotes", event.target.value)} disabled={readOnly} /></div>
-    </form>
-    <div className="panel" style={{ marginTop: 18, padding: 15 }}><strong style={{ display: "block", marginBottom: 10 }}>Resultado del servidor</strong><div className="summary-row"><span>Coste</span><strong>{formatMoney(calculation?.cost)}</strong></div><div className="summary-row"><span>Venta sin IGIC</span><strong>{formatMoney(calculation?.sale)}</strong></div><div className="summary-row"><span>Beneficio</span><strong>{formatMoney(calculation?.profit)}</strong></div></div>
-    {line.type === "material" ? <div style={{ marginTop: 22 }}><div className="section-heading" style={{ paddingInline: 0 }}><h2>Descuentos de proveedor</h2></div><div style={{ display: "grid", gap: 8, marginTop: 10 }}>{line.discounts.map((item, index) => <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}><div className="input">{index + 1}. {formatNumber(item.percentage)} %</div><RippleButton variant="ghost" size="icon" disabled={readOnly || busy} onClick={() => void execute({ type: "removeSupplierDiscount", expectedRevision: quote.revision, discountId: item.id }, "Descuento eliminado")}><Trash2 /></RippleButton></div>)}<div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}><input className="input" value={discount} onChange={(event) => setDiscount(event.target.value)} placeholder="Ej. 20" inputMode="decimal" disabled={readOnly} /><RippleButton variant="secondary" onClick={() => void addDiscount()} disabled={readOnly || busy || !discount}><Plus />Añadir</RippleButton></div></div></div> : null}
-    {line.type === "labor" ? <div style={{ marginTop: 22 }}><div className="section-heading" style={{ paddingInline: 0 }}><h2>Empleados</h2></div><div style={{ display: "grid", gap: 8, marginTop: 10 }}>{line.laborEntries.map((entry) => <div className="panel" key={entry.id} style={{ padding: 12, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}><div><strong>{entry.employeeNameSnapshot}</strong><span className="row-subtitle">{formatNumber(entry.hours)} h · {formatMoney(entry.saleRateSnapshot)}/h</span></div><RippleButton variant="ghost" size="icon" disabled={readOnly || busy} onClick={() => void execute({ type: "removeLaborEntry", expectedRevision: quote.revision, entryId: entry.id }, "Empleado eliminado")}><Trash2 /></RippleButton></div>)}<div className="form-grid"><SearchableSelect value={employeeId} onChange={setEmployeeId} disabled={readOnly} placeholder="Buscar empleado…" options={employees.filter((item) => item.active).map((item) => ({ value: item.id, label: item.name, description: `${formatMoney(item.saleRate)}/h` }))} /><input className="input" value={hours} onChange={(event) => setHours(event.target.value)} placeholder="Horas" /><RippleButton variant="secondary" className="span-2" onClick={() => void addEmployee()} disabled={readOnly || busy || !employeeId}><Plus />Añadir empleado</RippleButton></div></div></div> : null}
-  </SheetContent></Sheet>;
 }
 
 function AdjustmentDialog({ open, onOpenChange, quote, execute }: { open: boolean; onOpenChange: (open: boolean) => void; quote: QuoteRecord; execute: Execute }) {

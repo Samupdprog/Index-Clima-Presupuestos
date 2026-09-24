@@ -22,6 +22,8 @@ export function SearchableSelect({
   allowClear = true,
   clearLabel = "Quitar selección",
   onOpen,
+  onQueryChange,
+  preserveQueryOnBlur = false,
 }: {
   id?: string;
   value: string;
@@ -34,6 +36,8 @@ export function SearchableSelect({
   allowClear?: boolean;
   clearLabel?: string;
   onOpen?: () => void | Promise<void>;
+  onQueryChange?: (query: string) => void;
+  preserveQueryOnBlur?: boolean;
 }) {
   const generatedId = useId();
   const inputId = id ?? `combobox-${generatedId}`;
@@ -53,8 +57,8 @@ export function SearchableSelect({
   }
 
   useEffect(() => {
-    if (!open) setQuery(selected?.label ?? "");
-  }, [open, selected?.label]);
+    if (!open && !preserveQueryOnBlur) setQuery(selected?.label ?? "");
+  }, [open, selected?.label, preserveQueryOnBlur]);
 
   const filtered = useMemo(() => {
     const needle = normalize(query === selected?.label ? "" : query);
@@ -100,8 +104,8 @@ export function SearchableSelect({
         disabled={disabled}
         required={required && !value}
         onFocus={(event) => { openMenu(); event.currentTarget.select(); }}
-        onBlur={() => window.setTimeout(() => { setOpen(false); setQuery(selected?.label ?? ""); }, 120)}
-        onChange={(event) => { setQuery(event.target.value); setOpen(true); if (!event.target.value && value) onChange(""); }}
+        onBlur={() => window.setTimeout(() => { setOpen(false); if (!preserveQueryOnBlur) setQuery(selected?.label ?? ""); }, 120)}
+        onChange={(event) => { setQuery(event.target.value); onQueryChange?.(event.target.value); setOpen(true); if (value) onChange(""); }}
         onKeyDown={handleKeyDown}
       />
       {allowClear && value && !disabled ? <button type="button" className="combobox-clear" aria-label={clearLabel} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(""); setQuery(""); openMenu(); inputRef.current?.focus(); }}><X /></button> : <ChevronDown className="combobox-chevron" aria-hidden="true" />}

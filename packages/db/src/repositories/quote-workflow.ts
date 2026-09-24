@@ -1,5 +1,5 @@
 import { and, asc, eq, sql } from "drizzle-orm";
-import { calculateQuote, type PriceAdjustment, type QuoteLineInput } from "@quotes/domain";
+import { calculateQuote, resolveSaleBaseUnitPrice, type PriceAdjustment, type QuoteLineInput } from "@quotes/domain";
 import type { Database } from "../client.js";
 import { QuoteNotFoundError, ReadOnlyQuoteError, RevisionConflictError } from "../errors.js";
 import { auditEvents } from "../schema/operations.js";
@@ -28,6 +28,14 @@ export interface AddLineInput {
 }
 
 function decimal(value: string | null | undefined) { return value ?? "0"; }
+type DetailLine = Pick<typeof quoteLines.$inferInsert, "description" | "unit" | "quantity" | "igicRate" | "saleRule" | "saleRuleValue" | "baseUnitPrice" | "directUnitCost" | "supplierUnitPrice" | "saleBaseMode" | "supplierNameSnapshot" | "supplierCodeSnapshot" | "internalReference" | "internalNotes">;
+type DetailDiscount = { id?: string; percentage: string };
+type DetailLabor = { id?: string; employeeId?: string; employeeNameSnapshot: string; hours: string; costRateSnapshot: string; saleRateSnapshot: string };
+type DetailInput = { installationId: string; quoteId: string; expectedRevision: number; line: DetailLine; discounts: DetailDiscount[]; laborEntries: DetailLabor[] };
+function pricedDetails(input: DetailInput): DetailLine {
+  if (input.line.saleRule !== "add_percentage" && input.line.saleRule !== "add_euros_per_unit") return input.line;
+  return { ...input.line, baseUnitPrice: resolveSaleBaseUnitPrice(input.line.saleBaseMode ?? "net_cost", input.line.directUnitCost, input.line.supplierUnitPrice, input.discounts).toFixed(6) };
+}
 
 async function loadQuoteCalculation(tx: QueryExecutor, quoteId: string) {
   const rows = await tx.select().from(quoteLines).where(eq(quoteLines.quoteId, quoteId)).orderBy(asc(quoteLines.position));
@@ -78,6 +86,53 @@ async function finalize(tx: QueryExecutor, quoteId: string, installationId: stri
 
 export function createQuoteWorkflowRepository(db: Database) {
   return {
+    async createLineWithDetails(input: DetailInput & { lineType: "material" | "labor" | "travel" | "other"; catalogMaterialId?: string }) {
+      return db.transaction(async (tx) => {
+        if ((input.laborEntries.length && input.lineType !== "labor") || (input.discounts.length && input.lineType !== "material")) throw new Error("invalid_line_details");
+        const [quote] = await tx.select().from(quotes).where(and(eq(quotes.id, input.quoteId), eq(quotes.installationId, input.installationId))).limit(1);
+        if (!quote) throw new QuoteNotFoundError(input.quoteId);
+        if (quote.accessMode === "read_only" || quote.status === "archived") throw new ReadOnlyQuoteError(input.quoteId);
+        if (quote.revision !== input.expectedRevision) throw new RevisionConflictError("quote", input.quoteId);
+        const [material] = input.catalogMaterialId ? await tx.select().from(catalogMaterials).where(and(eq(catalogMaterials.id, input.catalogMaterialId), eq(catalogMaterials.installationId, input.installationId))).limit(1) : [];
+        if (input.catalogMaterialId && !material) throw new Error("catalog_material_not_found");
+        const [last] = await tx.select({ position: sql<number>`coalesce(max(${quoteLines.position}), -1)` }).from(quoteLines).where(eq(quoteLines.quoteId, input.quoteId));
+        const [created] = await tx.insert(quoteLines).values({ ...pricedDetails(input), quoteId: input.quoteId, type: input.lineType, position: Number(last?.position ?? -1) + 1, catalogMaterialId: material?.id, supplierNameSnapshot: input.line.supplierNameSnapshot ?? material?.supplierNameSnapshot, supplierCodeSnapshot: input.line.supplierCodeSnapshot ?? material?.supplierCode, supplierListPriceSnapshot: material?.supplierUnitPrice, costSnapshot: material?.supplierUnitPrice, priceSnapshot: material?.saleUnitPrice }).returning({ id: quoteLines.id });
+        for (const [position, item] of input.discounts.entries()) await tx.insert(quoteLineDiscounts).values({ quoteLineId: created!.id, position, percentage: item.percentage });
+        for (const entry of input.laborEntries) await tx.insert(quoteLineLaborEntries).values({ quoteLineId: created!.id, ...entry });
+        return finalize(tx, input.quoteId, input.installationId, input.expectedRevision, "quote.line.created_with_details");
+      });
+    },
+    async updateLineDetails(input: DetailInput & { lineId: string }) {
+      return db.transaction(async (tx) => {
+        const [quote] = await tx.select().from(quotes).where(and(eq(quotes.id, input.quoteId), eq(quotes.installationId, input.installationId))).limit(1);
+        if (!quote) throw new QuoteNotFoundError(input.quoteId);
+        if (quote.accessMode === "read_only" || quote.status === "archived") throw new ReadOnlyQuoteError(input.quoteId);
+        if (quote.revision !== input.expectedRevision) throw new RevisionConflictError("quote", input.quoteId);
+        const [line] = await tx.select().from(quoteLines).where(and(eq(quoteLines.id, input.lineId), eq(quoteLines.quoteId, input.quoteId))).limit(1);
+        if (!line) throw new Error("quote_line_not_found");
+        if ((input.laborEntries.length && line.type !== "labor") || (input.discounts.length && line.type !== "material")) throw new Error("invalid_line_details");
+        await tx.update(quoteLines).set({ ...pricedDetails(input), updatedAt: new Date() }).where(eq(quoteLines.id, input.lineId));
+        const oldDiscounts = await tx.select().from(quoteLineDiscounts).where(eq(quoteLineDiscounts.quoteLineId, input.lineId));
+        const discountIds = new Set(oldDiscounts.map((item) => item.id));
+        if (input.discounts.some((item) => item.id && !discountIds.has(item.id))) throw new Error("discount_not_in_line");
+        for (const old of oldDiscounts) if (!input.discounts.some((item) => item.id === old.id)) await tx.delete(quoteLineDiscounts).where(eq(quoteLineDiscounts.id, old.id));
+        for (const [position, item] of input.discounts.entries()) if (item.id) await tx.update(quoteLineDiscounts).set({ position: position + 1000000, percentage: item.percentage }).where(eq(quoteLineDiscounts.id, item.id));
+        for (const [position, item] of input.discounts.entries()) {
+          if (item.id) await tx.update(quoteLineDiscounts).set({ position }).where(eq(quoteLineDiscounts.id, item.id));
+          else await tx.insert(quoteLineDiscounts).values({ quoteLineId: input.lineId, position, percentage: item.percentage });
+        }
+        const oldLabor = await tx.select().from(quoteLineLaborEntries).where(eq(quoteLineLaborEntries.quoteLineId, input.lineId));
+        const laborIds = new Set(oldLabor.map((item) => item.id));
+        if (input.laborEntries.some((item) => item.id && !laborIds.has(item.id))) throw new Error("labor_entry_not_in_line");
+        for (const old of oldLabor) if (!input.laborEntries.some((item) => item.id === old.id)) await tx.delete(quoteLineLaborEntries).where(eq(quoteLineLaborEntries.id, old.id));
+        for (const entry of input.laborEntries) {
+          const { id, ...values } = entry;
+          if (id) await tx.update(quoteLineLaborEntries).set(values).where(eq(quoteLineLaborEntries.id, id));
+          else await tx.insert(quoteLineLaborEntries).values({ quoteLineId: input.lineId, ...values });
+        }
+        return finalize(tx, input.quoteId, input.installationId, input.expectedRevision, "quote.line.details_updated");
+      });
+    },
     async addLine(input: AddLineInput) {
       return db.transaction(async (tx) => {
         const [last] = await tx.select({ position: sql<number>`coalesce(max(${quoteLines.position}), -1)` }).from(quoteLines).where(eq(quoteLines.quoteId, input.quoteId));

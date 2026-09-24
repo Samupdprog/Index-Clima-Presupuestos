@@ -5,6 +5,7 @@ import {
   applyConsecutiveDiscounts,
   calculateLine,
   calculateQuote,
+  resolveSaleBaseUnitPrice,
 } from "./engine.js";
 
 const value = (input: { type: "unit_price" | "fixed_line_total" | "add_euros_per_unit" | "add_percentage"; value: string; baseUnitPrice?: string }) => ({
@@ -39,6 +40,7 @@ describe("quote engine", () => {
     const result = calculateLine({
       ...value({ type: "unit_price", value: "0" }),
       type: "labor",
+      igicRate: "7",
       laborEntries: [
         { employeeName: "Alejandro", hours: "6", costRate: "10", saleRate: "20" },
         { employeeName: "Kevin", hours: "4", costRate: "12", saleRate: "25" },
@@ -46,6 +48,36 @@ describe("quote engine", () => {
     });
     expect(result.cost.toFixed(2)).toBe("108.00");
     expect(result.sale.toFixed(2)).toBe("220.00");
+    expect(result.finalSaleWithTax.toFixed(2)).toBe("235.40");
+    expect(result.profit.toFixed(2)).toBe("112.00");
+  });
+
+  it("recalculates a labor line when hours and rates change or an employee is removed", () => {
+    const entries = [
+      { hours: "4", costRate: "22.50", saleRate: "42" },
+      { hours: "3", costRate: "21", saleRate: "40" },
+    ];
+    const line = { ...value({ type: "unit_price" as const, value: "0" }), type: "labor" as const, laborEntries: entries, igicRate: "7" };
+    const initial = calculateLine(line);
+    expect(initial.cost.toFixed(2)).toBe("153.00");
+    expect(initial.sale.toFixed(2)).toBe("288.00");
+    expect(initial.finalSaleWithTax.toFixed(2)).toBe("308.16");
+    expect(initial.profit.toFixed(2)).toBe("135.00");
+    expect(calculateLine({ ...line, laborEntries: [{ ...entries[0]!, hours: "5", costRate: "23", saleRate: "43" }] }).sale.toFixed(2)).toBe("215.00");
+  });
+
+  it("keeps discount order and uses the persisted base for percentage and euro additions", () => {
+    const discounts = [{ percentage: "20" }, { percentage: "5" }];
+    const net = applyConsecutiveDiscounts("100", discounts);
+    expect(net.toFixed(2)).toBe("76.00");
+    expect(calculateLine({ ...value({ type: "add_percentage", value: "10", baseUnitPrice: net.toFixed(6) }), quantity: "2", supplierUnitPrice: "100", supplierDiscounts: discounts, igicRate: "7" }).sale.toFixed(2)).toBe("167.20");
+    expect(calculateLine({ ...value({ type: "add_percentage", value: "10", baseUnitPrice: "100" }), quantity: "2" }).sale.toFixed(2)).toBe("220.00");
+    expect(calculateLine({ ...value({ type: "add_euros_per_unit", value: "4", baseUnitPrice: net.toFixed(6) }), quantity: "2" }).sale.toFixed(2)).toBe("160.00");
+    expect(applyConsecutiveDiscounts("100", discounts.slice(1)).toFixed(2)).toBe("95.00");
+    expect(applyConsecutiveDiscounts("100", [...discounts].reverse()).toFixed(2)).toBe("76.00");
+    expect(resolveSaleBaseUnitPrice("net_cost", null, "100", discounts).toFixed(2)).toBe("76.00");
+    expect(resolveSaleBaseUnitPrice("supplier_list_price", null, "100", discounts).toFixed(2)).toBe("100.00");
+    expect(resolveSaleBaseUnitPrice("net_cost", "70", "100", discounts).toFixed(2)).toBe("70.00");
   });
 
   it("reports positive, negative, zero-cost and zero-sale metrics", () => {

@@ -76,11 +76,15 @@ export function SheetContent({
   children,
   title,
   description,
+  eyebrow,
+  wide = false,
   footer,
 }: {
   children: ReactNode;
   title: string;
   description?: string;
+  eyebrow?: string;
+  wide?: boolean;
   footer?: ReactNode;
 }) {
   const reduceMotion = useReducedMotion();
@@ -99,7 +103,7 @@ export function SheetContent({
         </DialogPrimitive.Overlay>
         <DialogPrimitive.Content asChild forceMount>
           <motion.aside
-            className="sheet-content"
+            className={`sheet-content${wide ? " sheet-wide" : ""}`}
             initial={reduceMotion ? { opacity: 0 } : { x: "100%", opacity: 0.6 }}
             animate={{ x: 0, opacity: 1 }}
             exit={reduceMotion ? { opacity: 0 } : { x: "100%", opacity: 0.6 }}
@@ -107,6 +111,7 @@ export function SheetContent({
             style={{ position: "fixed", insetBlock: 0, right: 0 }}
           >
             <div className="sheet-header">
+              {eyebrow ? <p className="sheet-eyebrow">{eyebrow}</p> : null}
               <DialogPrimitive.Title>{title}</DialogPrimitive.Title>
               {description ? <DialogPrimitive.Description>{description}</DialogPrimitive.Description> : null}
             </div>
