@@ -21,10 +21,12 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       ...(body !== undefined ? { body } : {}),
       cache: "no-store",
     });
-    return new Response(response.body, {
-      status: response.status,
-      headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
-    });
+    const forwarded: Record<string, string> = {
+      "content-type": response.headers.get("content-type") ?? "application/json",
+    };
+    const holdedSearch = response.headers.get("x-holded-search");
+    if (holdedSearch) forwarded["x-holded-search"] = holdedSearch;
+    return new Response(response.body, { status: response.status, headers: forwarded });
   } catch {
     return Response.json({ error: "api_unavailable" }, { status: 503 });
   }

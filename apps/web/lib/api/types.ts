@@ -4,6 +4,8 @@ export type QuoteAccessMode = "editable" | "read_only";
 export type LineType = "material" | "labor" | "travel" | "adjustment" | "other" | "title";
 export type SaleRule = "unit_price" | "fixed_line_total" | "add_euros_per_unit" | "add_percentage";
 
+export type ClientSyncStatus = "pending" | "synced" | "error" | "conflict";
+
 export interface ClientRecord {
   id: string;
   name: string;
@@ -13,6 +15,10 @@ export interface ClientRecord {
   address: string | null;
   revision: number;
   updatedAt?: string;
+  holdedContactId?: string | null;
+  syncStatus?: ClientSyncStatus;
+  lastSyncedAt?: string | null;
+  syncError?: string | null;
 }
 
 export interface LaborEntry {

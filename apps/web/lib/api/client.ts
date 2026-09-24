@@ -30,6 +30,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+export type HoldedSearchStatus = "disabled" | "ok" | "degraded" | null;
+
+async function requestWithHoldedStatus<T>(path: string): Promise<{ data: T; holded: HoldedSearchStatus }> {
+  const response = await fetch(`/api/backend${path}`, {
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+  });
+  const payload = await response.json().catch(() => ({})) as T & { error?: string; details?: unknown };
+  if (!response.ok) throw new ApiError(response.status, (payload as { error?: string }).error ?? "unknown_error");
+  return { data: payload as T, holded: response.headers.get("x-holded-search") as HoldedSearchStatus };
+}
+
 function query(path: string, params: Record<string, string | undefined>) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => { if (value !== undefined) search.set(key, value); });
@@ -59,6 +71,7 @@ export const api = {
   command: (id: string, command: QuoteCommand) => request<{ quote: QuoteRecord; calculation: QuoteRecord["calculation"] }>(`/quotes/${id}/commands`, { method: "POST", body: JSON.stringify(command) }),
 
   searchClients: (q = "") => request<ClientRecord[]>(query("/clients", { q })),
+  searchClientsWithStatus: (q = "") => requestWithHoldedStatus<ClientRecord[]>(query("/clients", { q })),
   createClient: (data: CreateClientRequest) => request<ClientRecord>("/clients", { method: "POST", body: JSON.stringify(data) }),
   updateClient: (id: string, data: UpdateClientRequest) => request<ClientRecord>(`/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
