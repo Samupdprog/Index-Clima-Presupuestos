@@ -53,12 +53,14 @@ export interface HoldedSettingsResponse {
   isConfigured: boolean;
   keyMasked: string | null;
   checkIntervalMinutes: number;
-  health: {
-    status: "unknown" | "checking" | "healthy" | "unhealthy";
-    code: "ok" | "invalid_api_key" | "network_error" | "rate_limit" | "unexpected_error" | "not_configured" | "unknown";
-    message: string | null;
-    lastCheckedAt: string | null;
-  };
+  health: HoldedHealth;
+}
+
+export interface HoldedHealth {
+  status: "unknown" | "checking" | "healthy" | "unhealthy";
+  code: "ok" | "invalid_api_key" | "insufficient_permissions" | "network_error" | "rate_limit" | "unexpected_error" | "not_configured" | "unknown";
+  message: string | null;
+  lastCheckedAt: string | null;
 }
 
 export const api = {
@@ -76,7 +78,7 @@ export const api = {
   updateClient: (id: string, data: UpdateClientRequest) => request<ClientRecord>(`/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
   getHoldedSettings: () => request<HoldedSettingsResponse>("/holded/settings"),
-  updateHoldedSettings: (data: { apiKey?: string; checkIntervalMinutes?: number }) => request<HoldedSettingsResponse>("/holded/settings", { method: "PATCH", body: JSON.stringify(data) }),
+  updateHoldedSettings: (data: { apiKey?: string; checkIntervalMinutes?: number; removeApiKey?: boolean }) => request<HoldedSettingsResponse>("/holded/settings", { method: "PATCH", body: JSON.stringify(data) }),
   checkHoldedHealth: () => request<HoldedSettingsResponse["health"]>("/holded/health", { method: "POST", body: JSON.stringify({}) }),
 
   getCatalog: <T extends CatalogRecord>(kind: CatalogKind) => request<T[]>(`/catalogs/${kind}`),

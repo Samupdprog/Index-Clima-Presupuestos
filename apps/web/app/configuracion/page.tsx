@@ -1,9 +1,24 @@
 "use client";
 
-import { CheckCircle2, Clock3, Laptop, Moon, ShieldCheck, Sun, TriangleAlert } from "lucide-react";
+import { Clock3, Laptop, Moon, RefreshCw, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
-import { api, type HoldedSettingsResponse } from "../../lib/api/client";
+import { api, type HoldedHealth, type HoldedSettingsResponse } from "../../lib/api/client";
+import { formatDate } from "../../lib/format";
+
+type LedTone = "green" | "yellow" | "red" | "gray";
+const LED_COLORS: Record<LedTone, string> = { green: "var(--success)", yellow: "#eab308", red: "var(--danger)", gray: "var(--foreground-muted)" };
+
+function holdedLed(health: HoldedHealth | undefined): { tone: LedTone; label: string } {
+  if (!health) return { tone: "gray", label: "Sin datos" };
+  if (health.status === "healthy") return { tone: "green", label: "Conectado" };
+  if (health.status === "checking") return { tone: "yellow", label: "Comprobando…" };
+  if (health.status === "unhealthy") {
+    if (health.code === "rate_limit" || health.code === "network_error") return { tone: "yellow", label: "Degradado" };
+    return { tone: "red", label: "Error" };
+  }
+  return { tone: "gray", label: "Sin configurar" };
+}
 
 const HOLD_INTERVAL_OPTIONS = [1, 5, 10, 15, 30, 60];
 
@@ -15,6 +30,7 @@ export default function Page() {
   const [checkIntervalMinutes, setCheckIntervalMinutes] = useState(5);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +86,38 @@ export default function Page() {
     }
   }
 
+  async function handleCheck() {
+    setChecking(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await api.checkHoldedHealth();
+      setSettings(await api.getHoldedSettings());
+    } catch {
+      setError("No se pudo comprobar la conexión con Holded.");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api.updateHoldedSettings({ removeApiKey: true });
+      setSettings(result);
+      setApiKeyInput("");
+      setMessage("Se ha desconectado la clave de Holded.");
+    } catch {
+      setError("No se pudo desconectar la clave de Holded.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const led = holdedLed(settings?.health);
+
   const themes = [{ value: "light", label: "Claro", description: "Superficies luminosas y contraste limpio.", icon: Sun }, { value: "dark", label: "Oscuro", description: "Entorno sobrio para trabajar con poca luz.", icon: Moon }, { value: "system", label: "Sistema", description: "Sigue la preferencia de este dispositivo.", icon: Laptop }];
 
   return <div className="page page-narrow"><div className="page-header"><div><p className="eyebrow">Preferencias</p><h1 className="page-title">Configuración</h1><p className="page-subtitle">Ajustes de interfaz y de integración para esta instalación.</p></div></div>
@@ -90,11 +138,16 @@ export default function Page() {
 
       {loading ? <p style={{ margin: 0, color: "var(--foreground-muted)" }}>Cargando configuración…</p> : <>
         <div style={{ display: "grid", gap: 12 }}>
-          <div className="notice" style={{ margin: 0 }}>
-            {settings?.health.status === "healthy" ? <CheckCircle2 /> : settings?.health.status === "unhealthy" ? <TriangleAlert /> : <ShieldCheck />}
-            <span>
-              {settings?.health.message ?? "La comprobación de salud no está disponible todavía."}
+          <div className="notice" style={{ margin: 0, display: "flex", alignItems: "flex-start", gap: 12 }} role="status" aria-live="polite">
+            <span aria-hidden="true" style={{ width: 12, height: 12, borderRadius: "50%", marginTop: 3, flexShrink: 0, background: LED_COLORS[led.tone], boxShadow: `0 0 0 3px color-mix(in srgb, ${LED_COLORS[led.tone]} 25%, transparent)` }} />
+            <span style={{ display: "grid", gap: 2 }}>
+              <strong style={{ fontSize: 13 }}>Holded: {led.label}</strong>
+              <span style={{ color: "var(--foreground-muted)", fontSize: 13 }}>{settings?.health.message ?? "La comprobación de salud no está disponible todavía."}</span>
+              {settings?.health.lastCheckedAt ? <span style={{ color: "var(--foreground-muted)", fontSize: 12 }}>Última comprobación: {formatDate(settings.health.lastCheckedAt)}</span> : null}
             </span>
+            <button className="button button-secondary" type="button" onClick={handleCheck} disabled={checking} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <RefreshCw size={14} className={checking ? "spin" : undefined} />{checking ? "Comprobando…" : "Comprobar conexión"}
+            </button>
           </div>
 
           <label style={{ display: "grid", gap: 6 }}>
@@ -125,9 +178,12 @@ export default function Page() {
               {settings?.keyMasked ? `Clave guardada: ${settings.keyMasked}` : "Todavía no hay clave guardada."}
             </div>
 
-            <button className="button button-primary" disabled={saving} onClick={handleSave}>
-              {saving ? "Guardando…" : "Guardar configuración"}
-            </button>
+            <div style={{ display: "flex", gap: 8 }}>
+              {settings?.keyMasked ? <button className="button button-secondary" type="button" disabled={saving} onClick={handleDisconnect}>Desconectar</button> : null}
+              <button className="button button-primary" disabled={saving} onClick={handleSave}>
+                {saving ? "Guardando…" : "Guardar configuración"}
+              </button>
+            </div>
           </div>
 
           {message ? <p style={{ margin: 0, color: "var(--success)" }}>{message}</p> : null}
