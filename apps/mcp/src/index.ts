@@ -12,6 +12,10 @@ const application = createMcpApplication({
   ...(process.env.MCP_AUTH_TOKEN ? { authToken: process.env.MCP_AUTH_TOKEN } : {}),
   ...(process.env.MCP_SUBJECT ? { subject: process.env.MCP_SUBJECT } : {}),
   ...(process.env.MCP_SCOPES ? { scopes: process.env.MCP_SCOPES } : {}),
+  ...(process.env.MCP_AUTH_MODE ? { authMode: process.env.MCP_AUTH_MODE } : {}),
+  ...(process.env.AUTH_ISSUER_URL ? { authIssuerUrl: process.env.AUTH_ISSUER_URL } : {}),
+  ...(process.env.AUTH_JWKS_URL ? { authJwksUrl: process.env.AUTH_JWKS_URL } : {}),
+  ...(process.env.AUTH_ALLOWED_SUBJECTS ? { authAllowedSubjects: process.env.AUTH_ALLOWED_SUBJECTS } : {}),
 });
 
 const server = application.app.listen(port, host, () => console.log(`[mcp] listening on ${host}:${port}`));

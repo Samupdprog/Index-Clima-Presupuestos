@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import { createClientRequestSchema, updateClientRequestSchema, quoteCommandSchema, holdedCursorSchema, holdedIdSchema, holdedEstimateDetailSchema, holdedEstimateListSchema, holdedEstimateSearchSchema } from "@quotes/contracts";
 import type { McpPrincipal, McpScope } from "./auth.js";
 import { GeneratorApiError, toolError, type GeneratorApi } from "./api-client.js";
+import { insufficientScopeChallenge, wwwAuthenticateMeta } from "./security.js";
 import { clientOutput, quoteOutput, mutationOutput, previewOutput, reviewOutput, holdedStatusOutput, syncClientsOutput, decimalSchema, revisionSchema, envelopeOutput } from "./schemas.js";
 
 type Input = Record<string, unknown>;
@@ -112,10 +113,15 @@ export const generatorTools: GeneratorTool[] = [
   { name: "get_catalog", description: "Lee catálogo existente para elegir materiales, empleados, suplementos, viajes, textos o proveedores. No modifica catálogo.", scopes: ["quotes:read"], input: z.strictObject({ kind: z.enum(["materials", "employees", "supplements", "travels", "text-templates", "suppliers"]), employeeId: z.uuid().optional() }), output: z.array(z.record(z.string(), z.json())), readOnly: true, run: (api, p, a) => api.request("GET", `/catalogs/${String(a.kind)}${a.employeeId ? `?employeeId=${pathId(a.employeeId)}` : ""}`, p) },
 ];
 
-export async function callGeneratorTool(tool: GeneratorTool, api: GeneratorApi, principal: McpPrincipal, input: unknown) {
+export async function callGeneratorTool(tool: GeneratorTool, api: GeneratorApi, principal: McpPrincipal, input: unknown, context: { resourceMetadataUrl?: string } = {}) {
   let result: { ok: boolean; data: unknown; error: unknown };
+  let meta: Record<string, unknown> | undefined;
   try {
-    if (!tool.scopes.every((scope) => principal.scopes.includes(scope))) throw new GeneratorApiError(toolError("forbidden", { status: 403 }));
+    // Comprobación en servidor: nunca se confía en que el cliente respete la descripción o los securitySchemes.
+    if (!tool.scopes.every((scope) => principal.scopes.includes(scope))) {
+      if (context.resourceMetadataUrl) meta = wwwAuthenticateMeta(insufficientScopeChallenge(tool.scopes, principal.scopes, context.resourceMetadataUrl));
+      throw new GeneratorApiError(toolError("forbidden", { status: 403 }));
+    }
     const parsed = tool.input.safeParse(input);
     if (!parsed.success) throw new GeneratorApiError(toolError("invalid_input", { status: 400 }));
     const data = await tool.run(api, principal, parsed.data);
@@ -125,7 +131,7 @@ export async function callGeneratorTool(tool: GeneratorTool, api: GeneratorApi, 
   } catch (error) {
     result = { ok: false, data: null, error: error instanceof GeneratorApiError ? error.detail : toolError("api_error") };
   }
-  return { content: [{ type: "text" as const, text: JSON.stringify(result) }], structuredContent: result, ...(result.ok ? {} : { isError: true }) };
+  return { content: [{ type: "text" as const, text: JSON.stringify(result) }], structuredContent: result, ...(result.ok ? {} : { isError: true }), ...(meta ? { _meta: meta } : {}) };
 }
 
 export { envelopeOutput };
