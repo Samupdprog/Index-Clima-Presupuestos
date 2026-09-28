@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildEstimatePayload, resolveIgicTax, syncQuoteToHolded, verifyEstimate } from "./quote-export.js";
+import { buildEstimatePayload, buildHoldedNotes, resolveIgicTax, syncQuoteToHolded, verifyEstimate } from "./quote-export.js";
 import type { ExportableQuote, EstimateTax, QuoteExportDeps } from "../ports/quote-export.js";
 
 const tax: EstimateTax = { id: "t7", key: "igic7", name: "IGIC 7%", amount: "7", scope: "sales", group: "igic", type: "percentage", status: true };
@@ -9,6 +9,47 @@ function dependencies() {
   return { quotes: { getQuoteById: vi.fn().mockResolvedValue(quote) }, clients: { getById: vi.fn().mockResolvedValue({ holdedContactId: "contact" }) }, exports: { withLock: vi.fn((_i, _q, work) => work()), reserve: vi.fn().mockResolvedValue({ documentId: null, uncertain: false }), recordId: vi.fn(), complete: vi.fn(), fail: vi.fn() }, holded: { listTaxes: vi.fn().mockResolvedValue([tax]), saveEstimate: vi.fn().mockResolvedValue({ id: "estimate" }), getEstimate: vi.fn().mockResolvedValue(remote), approveEstimate: vi.fn(), getEstimatePdf: vi.fn().mockResolvedValue(new Uint8Array([37, 80, 68, 70, 45])), findEstimateByTag: vi.fn().mockResolvedValue(null) }, logExport: vi.fn() };
 }
 const input = { installationId: "installation", quoteId: "quote", expectedRevision: 4 };
+describe("Holded document text formatting", () => {
+  it("keeps title as the first line of each notes block", () => {
+    expect(buildHoldedNotes([
+      {
+        position: 1,
+        title: "Condiciones",
+        body: "Validez 30 d?as.",
+      },
+      {
+        position: 0,
+        title: "Trabajos incluidos",
+        body: "Instalaci?n y puesta en marcha.",
+      },
+    ])).toBe(
+      "Trabajos incluidos\nInstalaci?n y puesta en marcha.\n\nCondiciones\nValidez 30 d?as."
+    );
+  });
+
+  it("preserves multiline bodies without HTML or Markdown", () => {
+    expect(buildHoldedNotes([
+      {
+        position: 0,
+        title: "Observaciones",
+        body: "- Primera l?nea\n- Segunda l?nea\n\nP?rrafo final.",
+      },
+    ])).toBe(
+      "Observaciones\n- Primera l?nea\n- Segunda l?nea\n\nP?rrafo final."
+    );
+  });
+
+  it("supports a text block without title", () => {
+    expect(buildHoldedNotes([
+      {
+        position: 0,
+        title: "",
+        body: "Texto libre sin encabezado.",
+      },
+    ])).toBe("Texto libre sin encabezado.");
+  });
+});
+
 describe("estimate export authority and recovery", () => {
   it("selects only actual active sales IGIC and refuses ambiguous or VAT mapping", () => {
     const vat = { ...tax, key: "vat7", name: "IVA", group: "vat" };

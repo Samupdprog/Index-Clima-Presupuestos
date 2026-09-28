@@ -24,6 +24,35 @@ export function resolveIgicTax(rate: string, taxes: EstimateTax[], mapping: Reco
 interface Calculation { saleWithoutTax: string; taxTotal: string; saleWithTax: string; lines: Array<{ quoteLineId: string; sale: string; igic: string }> }
 interface ExportLine { id: string; position?: number; type: string; description: string; quantity: string; igicRate: string; unit: string }
 
+export function buildHoldedNotes(
+  texts: Array<{ position: number; title?: string | null; body: string }>,
+): string {
+  return [...texts]
+    .sort((a, b) => a.position - b.position)
+    .map((entry) => {
+      const title = (entry.title ?? "").trim();
+      const body = entry.body
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n")
+        .trim();
+
+      // Holded renderiza la primera l?nea de cada bloque como encabezado
+      // en el PDF cuando usamos el campo `notes`.
+      // No a?adimos HTML ni Markdown: la API recibe texto plano.
+      if (title && body) return `${title}\n${body}`;
+      if (title) return title;
+      return body;
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function isHoldedNotFound(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { status?: unknown; code?: unknown };
+  return candidate.status === 404 || candidate.code === "not_found";
+}
+
 export function buildEstimatePayload(quote: ExportableQuote, contactId: string, taxes: EstimateTax[], mapping: Record<string, string> = {}): EstimatePayload {
   const calculation = quote.calculation as Calculation | null;
   if (!calculation?.lines?.length) throw new QuoteExportError("quote_not_calculated");
@@ -46,11 +75,7 @@ export function buildEstimatePayload(quote: ExportableQuote, contactId: string, 
     return { name: line.description.slice(0, 250), type: line.type === "material" ? "product" as const : "service" as const, units: quantity.toString(), price: price.toString(), discount: "0", taxes: resolveIgicTax(line.igicRate, taxes, mapping) };
   });
   if (!items.length || !subtotal.eq(calculation.saleWithoutTax) || !taxTotal.eq(calculation.taxTotal)) throw new QuoteExportError("quote_calculation_stale");
-  const notes = [...(quote.texts ?? [])]
-    .sort((a, b) => a.position - b.position)
-    .map((entry) => [(entry.title ?? "").trim(), entry.body.trim()].filter(Boolean).join("\n"))
-    .filter(Boolean)
-    .join("\n\n");
+  const notes = buildHoldedNotes(quote.texts ?? []);
   return { contact_id: contactId, description: `${quote.reference} · ${quote.title}`, number: quote.reference, date: new Date().toISOString().slice(0, 10), notes, tags: [`index-clima-${quote.installationId}-${quote.id}`], currency: "EUR", discount: "0", tax_included: true, show_total: true, items };
 }
 
@@ -87,8 +112,25 @@ export function syncQuoteToHolded(deps: QuoteExportDeps) {
     let attemptedCreate = false;
     try {
       if (documentId) {
-        const existing = await deps.holded.getEstimate(documentId);
-        if (existing.document_number !== payload.number) throw new QuoteExportError("holded_number_mismatch", { expected: payload.number, actual: existing.document_number ?? null, estimateId: documentId });
+        try {
+          const existing = await deps.holded.getEstimate(documentId);
+          if (existing.document_number !== payload.number) {
+            throw new QuoteExportError("holded_number_mismatch", {
+              expected: payload.number,
+              actual: existing.document_number ?? null,
+              estimateId: documentId,
+            });
+          }
+        } catch (error) {
+          if (!isHoldedNotFound(error)) throw error;
+
+          // El Estimate fue borrado manualmente en Holded.
+          // Eliminamos ?nicamente el v?nculo remoto obsoleto y
+          // permitimos crear un nuevo Estimate para este presupuesto.
+          await deps.exports.recordId(input.installationId, input.quoteId, null);
+          documentId = null;
+          uncertain = false;
+        }
       }
       if (!documentId && uncertain) {
         documentId = await deps.holded.findEstimateByTag(payload.tags![0]!, payload.contact_id);
