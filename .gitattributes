@@ -1,0 +1,4 @@
+# Scripts que se ejecutan en el servidor Linux: siempre LF.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf

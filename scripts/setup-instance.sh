@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Genera un `.env` de producción con secretos aleatorios a partir de
+# `.env.example`. Nunca sobrescribe un `.env` existente ni muestra secretos.
+
 if [ "$#" -ne 4 ]; then
   echo "Uso:"
   echo "  $0 INSTANCE_SLUG APP_HOST MCP_HOST ACME_EMAIL"
@@ -32,59 +35,44 @@ command -v openssl >/dev/null 2>&1 || {
   exit 1
 }
 
-POSTGRES_PASSWORD="$(openssl rand -hex 32)"
-INTERNAL_SERVICE_TOKEN="$(openssl rand -hex 32)"
+secret() { openssl rand -hex 32; }
+uuid() {
+  if [ -r /proc/sys/kernel/random/uuid ]; then cat /proc/sys/kernel/random/uuid
+  elif command -v uuidgen >/dev/null 2>&1; then uuidgen | tr 'A-Z' 'a-z'
+  else
+    local h; h="$(openssl rand -hex 16)"
+    echo "${h:0:8}-${h:8:4}-4${h:13:3}-a${h:17:3}-${h:20:12}"
+  fi
+}
 
-cat > "$ENV_FILE" <<EOF
-INSTANCE_SLUG=$SLUG
-INSTALLATION_ID=
-INSTALLATION_SLUG=$SLUG
-INSTALLATION_NAME=$SLUG
-APP_NAME=Generador de Presupuestos
-LOCALE=es-ES
-TZ=UTC
-CURRENCY=EUR
-TAX_LABEL=VAT
-TAX_DEFAULT_RATE=21
-TAX_ALLOWED_RATES=0,4,10,21
-FEATURE_MATERIALS=true
-FEATURE_LABOR=true
-FEATURE_TRAVEL=true
-FEATURE_SUPPLIER_DISCOUNTS=true
-FEATURE_PRICE_ADJUSTMENTS=true
-FEATURE_TEXT_TEMPLATES=true
-FEATURE_HOLDED=false
-FEATURE_MCP=false
-FEATURE_AI_IMPORT=false
+POSTGRES_PASSWORD="$(secret)"
+declare -A VALUES=(
+  [INSTANCE_SLUG]="$SLUG"
+  [INSTALLATION_ID]="$(uuid)"
+  [INSTALLATION_SLUG]="$SLUG"
+  [APP_ACCESS_PASSWORD]="$(secret)"
+  [APP_HOST]="$APP_HOST"
+  [MCP_HOST]="$MCP_HOST"
+  [MCP_PUBLIC_URL]="https://$MCP_HOST/mcp"
+  [ACME_EMAIL]="$ACME_EMAIL"
+  [POSTGRES_PASSWORD]="$POSTGRES_PASSWORD"
+  [DATABASE_URL]="postgresql://quotes:$POSTGRES_PASSWORD@postgres:5432/quotes"
+  [INTERNAL_SERVICE_TOKEN]="$(secret)"
+  [HOLDED_ENCRYPTION_KEY]="$(secret)"
+  [MCP_AUTH_TOKEN]="$(secret)"
+)
 
-APP_HOST=$APP_HOST
-MCP_HOST=$MCP_HOST
-TRAEFIK_NETWORK=app-net
-ACME_EMAIL=$ACME_EMAIL
-
-WEB_PORT=3000
-API_PORT=4000
-MCP_PORT=4001
-WORKER_HEALTH_PORT=4002
-POSTGRES_PORT=5432
-
-POSTGRES_DB=quotes
-POSTGRES_USER=quotes
-POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-DATABASE_URL=postgresql://quotes:$POSTGRES_PASSWORD@postgres:5432/quotes
-
-INTERNAL_API_URL=http://api:4000
-INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
-
-HOLDED_API_KEY=
-
-MCP_AUTH_MODE=disabled
-MCP_REQUIRED_SCOPES=clients:read,clients:write,quotes:read,quotes:write,holded:read,holded:write
-AUTH_ISSUER_URL=
-AUTH_AUDIENCE=
-AUTH_JWKS_URL=
-EOF
+umask 077
+while IFS= read -r line || [ -n "$line" ]; do
+  key="${line%%=*}"
+  if [[ "$line" =~ ^[A-Z_][A-Z0-9_]*= ]] && [ -n "${VALUES[$key]+set}" ]; then
+    printf '%s=%s\n' "$key" "${VALUES[$key]}"
+  else
+    printf '%s\n' "$line"
+  fi
+done < "$ROOT/.env.example" > "$ENV_FILE"
 
 chmod 600 "$ENV_FILE"
-echo "Creado $ENV_FILE con permisos 600."
-echo "Los secretos no se muestran en pantalla."
+echo "Creado $ENV_FILE con permisos 600 (INSTALLATION_ID y secretos generados)."
+echo "Los secretos no se muestran. Consulta los que necesites con, por ejemplo:"
+echo "  grep -E '^(APP_ACCESS_PASSWORD|MCP_AUTH_TOKEN)=' .env"
