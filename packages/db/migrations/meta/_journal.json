@@ -43,6 +43,13 @@
       "when": 1790322622233,
       "tag": "0005_supplement_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790621100660,
+      "tag": "0006_oauth_artifacts",
+      "breakpoints": true
     }
   ]
 }

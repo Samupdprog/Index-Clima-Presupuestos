@@ -1,6 +1,7 @@
 export * from "./schema/common.js";
 export * from "./schema/quotes.js";
 export * from "./schema/operations.js";
+export * from "./schema/oauth.js";
 export * from "./client.js";
 export * from "./audit-context.js";
 export * from "./repositories/webhooks.js";
@@ -12,3 +13,4 @@ export * from "./repositories/installations.js";
 export * from "./repositories/quotes.js";
 export * from "./repositories/quote-workflow.js";
 export * from "./repositories/catalogs.js";
+export * from "./repositories/oauth.js";
