@@ -578,7 +578,7 @@ const server = createServer(async (req, res) => {
         const client = await clients!.getById(installationId!, quote.clientId);
         if (client && !client.holdedContactId) await syncClientWithHolded({ clients: clients!, holded: await buildHoldedGateway() })({ installationId: installationId!, id: client.id, expectedRevision: client.revision });
       }
-      return sendJson(res, 200, await syncQuoteToHolded({ quotes: quotes!, clients: clients!, exports: createQuoteExportRepository(database!.db), holded: createHoldedEstimateGateway(newHoldedClient(resolvedKey)), taxMapping: (getHoldedSettingsConfig(config).taxMapping ?? {}) as Record<string, string> })({ installationId: installationId!, quoteId: quote.id, expectedRevision: parsed.data.expectedRevision }));
+      return sendJson(res, 200, await syncQuoteToHolded({ quotes: quotes!, clients: clients!, exports: createQuoteExportRepository(database!.db), holded: createHoldedEstimateGateway(newHoldedClient(resolvedKey)), taxMapping: (getHoldedSettingsConfig(config).taxMapping ?? {}) as Record<string, string>, logExport: (event) => console[event.status === "synced" ? "log" : "warn"](JSON.stringify({ msg: "holded_estimate_sync", ...event })) })({ installationId: installationId!, quoteId: quote.id, expectedRevision: parsed.data.expectedRevision }));
     }
     if (path[0] === "quotes" && path.length === 2 && req.method === "PATCH") {
       const parsed = revisionGuardSchema.safeParse(await readBody(req));

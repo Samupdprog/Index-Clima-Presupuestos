@@ -26,7 +26,7 @@ export function createQuoteExportRepository(db: Database) {
         return { documentId: quote.holdedEstimateId, uncertain };
       });
     },
-    async recordId(installationId: string, quoteId: string, documentId: string) {
+    async recordId(installationId: string, quoteId: string, documentId: string | null) {
       await db.update(quotes).set({ holdedEstimateId: documentId }).where(where(installationId, quoteId));
     },
     async complete(installationId: string, quoteId: string, exportedRevision: number) {

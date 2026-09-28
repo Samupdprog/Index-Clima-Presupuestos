@@ -6,7 +6,7 @@ import { DropdownMenu } from "radix-ui";
 import { AdjustmentDialog } from "./adjustment-dialog";
 import { ReviewDocument } from "./review-document";
 import { ConceptWorkspace } from "./editor/concept-workspace";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, Reorder, useDragControls, useReducedMotion } from "motion/react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -24,6 +24,7 @@ import {
   GripVertical,
   LoaderCircle,
   MoreHorizontal,
+  PencilLine,
   Plus,
   Settings2,
   Sparkles,
@@ -95,6 +96,7 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [textOpen, setTextOpen] = useState(false);
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>(1);
   const [conflict, setConflict] = useState(false);
   const { toasts, push } = useToasts();
@@ -247,20 +249,20 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
             <section className="panel texts-section">
               <div className="section-heading">
                 <h2>Textos del presupuesto</h2>
-                <RippleButton variant="ghost" size="sm" disabled={readOnly} onClick={() => setTextOpen(true)}><Plus />Añadir texto</RippleButton>
+                <RippleButton variant="ghost" size="sm" disabled={readOnly} onClick={() => { setEditingTextId(null); setTextOpen(true); }}><Plus />Añadir texto</RippleButton>
               </div>
-              {quote.texts?.length ? <div className="text-blocks">{quote.texts.map((text, index) => <div className="text-block" key={text.id}><GripVertical style={{ width: 16, color: "var(--foreground-soft)", marginTop: 2 }} /><div><h3>{text.title || "Sin título"}</h3><p>{text.body}</p></div><DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="button button-ghost button-icon" aria-label="Acciones del texto"><MoreHorizontal /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="dropdown-content" align="end"><DropdownMenu.Item className="dropdown-item" disabled={index === 0} onSelect={() => void reorderTexts(quote, text.id, -1, execute)}><ArrowUp />Subir</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item" disabled={index === (quote.texts?.length ?? 0) - 1} onSelect={() => void reorderTexts(quote, text.id, 1, execute)}><ArrowDown />Bajar</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item danger" onSelect={() => void execute({ type: "removeQuoteText", expectedRevision: quote.revision, textId: text.id }, "Texto eliminado")}><Trash2 />Eliminar</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div>)}</div> : <div style={{ padding: 20, color: "var(--foreground-muted)", fontSize: 12 }}>Añade condiciones, garantías o protección de datos para incluirlos en la revisión.</div>}
+              {quote.texts?.length ? <DraggableTextBlocks quote={quote} execute={execute} onEdit={(textId) => { setEditingTextId(textId); setTextOpen(true); }} onReorder={(texts) => setQuote({ ...quote, texts })} /> : <div style={{ padding: 20, color: "var(--foreground-muted)", fontSize: 12 }}>Añade condiciones, garantías o protección de datos para incluirlos en la revisión.</div>}
             </section>
 
             <WorkflowFooter backLabel="Preparación" onBack={() => setWorkflowStep(2)} nextLabel="Revisar precio final" onNext={() => setWorkflowStep(4)} nextDisabled={quote.lines.length === 0} />
           </> : null}
           {workflowStep === 4 ? <PriceStep quote={quote} readOnly={readOnly} onAdjust={() => setAdjustOpen(true)} onBack={() => setWorkflowStep(3)} onNext={() => setWorkflowStep(5)} /> : null}
-          {workflowStep === 5 ? <ReviewStep quote={quote} calculations={calculationByLine} readOnly={readOnly} onAddText={() => setTextOpen(true)} onBack={() => setWorkflowStep(4)} onSave={() => execute({ type: "changeQuoteStatus", expectedRevision: quote.revision, status: "finalized" }, "Presupuesto guardado como finalizado")} onExport={exportToHolded} /> : null}
+          {workflowStep === 5 ? <ReviewStep quote={quote} calculations={calculationByLine} readOnly={readOnly} onAddText={() => { setEditingTextId(null); setTextOpen(true); }} onBack={() => setWorkflowStep(4)} onSave={() => execute({ type: "changeQuoteStatus", expectedRevision: quote.revision, status: "finalized" }, "Presupuesto guardado como finalizado")} onExport={exportToHolded} /> : null}
         </motion.div>
       </AnimatePresence>
 
       <AdjustmentDialog open={adjustOpen} onOpenChange={setAdjustOpen} quote={quote} execute={execute} />
-      <AddTextDialog open={textOpen} onOpenChange={setTextOpen} quote={quote} templates={templates} execute={execute} />
+      <AddTextDialog open={textOpen} onOpenChange={setTextOpen} editingTextId={editingTextId} quote={quote} templates={templates} execute={execute} />
       <RevisionConflictDialog open={conflict} onOpenChange={setConflict} onReload={() => { setConflict(false); void load(); }} />
       <ToastViewport toasts={toasts} />
     </div>
@@ -453,7 +455,7 @@ function QuoteSummary({
         <div className="summary-divider" />
 
         <div className="summary-row summary-total">
-          <span>Total</span>
+          <span>Total cliente con IGIC</span>
           <strong>{formatMoney(calculation?.saleWithTax)}</strong>
         </div>
 
@@ -517,7 +519,7 @@ function PriceStep({ quote, readOnly, onAdjust, onBack, onNext }: { quote: Quote
 function ReviewStep({ quote, calculations, readOnly, onAddText, onBack, onSave, onExport }: { quote: QuoteRecord; calculations: Map<string, CalculatedLine>; readOnly: boolean; onAddText: () => void; onBack: () => void; onSave: () => Promise<QuoteRecord>; onExport: () => Promise<void> }) {
   const [action, setAction] = useState<"save" | "holded" | null>(null);
   async function run(kind: "save" | "holded") { setAction(kind); try { if (kind === "save") await onSave(); else await onExport(); } catch { /* La acción ya muestra un mensaje contextual. */ } finally { setAction(null); } }
-  return <section aria-labelledby="review-step-title"><div className="stage-heading"><div><p className="eyebrow">Paso 5 de 5</p><h2 id="review-step-title">Revisa lo que verá el cliente</h2><p>La vista comercial no incluye costes, empleados, beneficios ni reglas internas.</p></div><RippleButton variant="secondary" onClick={onAddText} disabled={readOnly}><Plus />Añadir condiciones</RippleButton></div><div className="review-layout"><div className="review-canvas"><ReviewDocument quote={quote} calculations={calculations} /></div><aside className="panel review-checklist"><h3>Comprobación final</h3><ul><li data-done={Boolean(quote.clientSnapshot)}><CheckCircle2 />Cliente identificado</li><li data-done={quote.lines.length > 0}><CheckCircle2 />{quote.lines.length} {quote.lines.length === 1 ? "concepto revisado" : "conceptos revisados"}</li><li data-done={Boolean(quote.calculation)}><CheckCircle2 />Precio calculado por el servidor</li><li data-done={Boolean(quote.texts?.length)}><CheckCircle2 />Condiciones y textos</li></ul><div className="summary-divider" /><div className="summary-row summary-total"><span>Total cliente</span><strong>{formatMoney(quote.calculation?.saleWithTax)}</strong></div>{quote.holdedEstimateId ? <div className="notice" style={{ marginTop: 14 }}><CheckCircle2 /><span>Vinculado con Holded. La próxima importación actualizará el mismo presupuesto.</span></div> : null}</aside></div><div className="workflow-footer workflow-footer-final"><button type="button" className="button button-ghost" onClick={onBack}><ArrowLeft />Precio final</button><div className="final-actions"><RippleButton variant="secondary" disabled={readOnly || Boolean(action) || !quote.calculation} onClick={() => void run("save")}>{action === "save" ? <LoaderCircle className="spin" /> : <Check />}{action === "save" ? "Guardando…" : "Guardar"}</RippleButton><RippleButton disabled={readOnly || Boolean(action) || !quote.calculation} onClick={() => void run("holded")}>{action === "holded" ? <LoaderCircle className="spin" /> : <CloudUpload />}{action === "holded" ? "Importando…" : quote.holdedEstimateId ? "Guardar y actualizar en Holded" : "Guardar e importar en Holded"}</RippleButton></div></div></section>;
+  return <section aria-labelledby="review-step-title"><div className="stage-heading"><div><p className="eyebrow">Paso 5 de 5</p><h2 id="review-step-title">Revisa lo que verá el cliente</h2><p>La vista comercial no incluye costes, empleados, beneficios ni reglas internas.</p></div><RippleButton variant="secondary" onClick={onAddText} disabled={readOnly}><Plus />Añadir condiciones</RippleButton></div><div className="review-layout"><div className="review-canvas"><ReviewDocument quote={quote} calculations={calculations} /></div><aside className="panel review-checklist"><h3>Comprobación final</h3><ul><li data-done={Boolean(quote.clientSnapshot)}><CheckCircle2 />Cliente identificado</li><li data-done={quote.lines.length > 0}><CheckCircle2 />{quote.lines.length} {quote.lines.length === 1 ? "concepto revisado" : "conceptos revisados"}</li><li data-done={Boolean(quote.calculation)}><CheckCircle2 />Precio calculado por el servidor</li><li data-done={Boolean(quote.texts?.length)}><CheckCircle2 />Condiciones y textos</li></ul><div className="summary-divider" /><div className="summary-row"><span>Total sin IGIC</span><strong>{formatMoney(quote.calculation?.saleWithoutTax)}</strong></div><div className="summary-row"><span>IGIC</span><strong>{formatMoney(quote.calculation?.taxTotal)}</strong></div><div className="summary-row summary-total"><span>Total cliente con IGIC</span><strong>{formatMoney(quote.calculation?.saleWithTax)}</strong></div><p className="field-hint">Se enviará a Holded con impuestos incluidos.</p>{quote.holdedEstimateId ? <div className="notice" style={{ marginTop: 14 }}><CheckCircle2 /><span>Vinculado con Holded. La próxima importación actualizará el mismo presupuesto.</span></div> : null}</aside></div><div className="workflow-footer workflow-footer-final"><button type="button" className="button button-ghost" onClick={onBack}><ArrowLeft />Precio final</button><div className="final-actions"><RippleButton variant="secondary" disabled={readOnly || Boolean(action) || !quote.calculation} onClick={() => void run("save")}>{action === "save" ? <LoaderCircle className="spin" /> : <Check />}{action === "save" ? "Guardando…" : "Guardar"}</RippleButton><RippleButton disabled={readOnly || Boolean(action) || !quote.calculation} onClick={() => void run("holded")}>{action === "holded" ? <LoaderCircle className="spin" /> : <CloudUpload />}{action === "holded" ? "Importando…" : quote.holdedEstimateId ? "Guardar y actualizar en Holded" : "Guardar e importar en Holded"}</RippleButton></div></div></section>;
 }
 
 function QuoteStatusControl({ quote, disabled, onChange }: { quote: QuoteRecord; disabled: boolean; onChange: (status: Exclude<QuoteStatus, "archived">) => Promise<QuoteRecord> }) {
@@ -535,16 +537,38 @@ function SaveIndicator({ state }: { state: SaveState }) {
   return <span className="save-status">{state === "saving" ? <LoaderCircle className="spin" /> : state === "saved" ? <Check /> : <AlertTriangle />} {state === "saving" ? "Guardando…" : state === "saved" ? "Guardado" : "Error al guardar"}</span>;
 }
 
-function AddTextDialog({ open, onOpenChange, quote, templates, execute }: { open: boolean; onOpenChange: (open: boolean) => void; quote: QuoteRecord; templates: TextTemplateRecord[]; execute: Execute }) {
+function AddTextDialog({ open, onOpenChange, editingTextId, quote, templates, execute }: { open: boolean; onOpenChange: (open: boolean) => void; editingTextId: string | null; quote: QuoteRecord; templates: TextTemplateRecord[]; execute: Execute }) {
   const [templateId, setTemplateId] = useState(""); const [title, setTitle] = useState(""); const [body, setBody] = useState(""); const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setTemplateId(""); setTitle(""); setBody(""); } }, [open]);
+  useEffect(() => { if (open) { const text = quote.texts?.find((item) => item.id === editingTextId); setTemplateId(""); setTitle(text?.title ?? ""); setBody(text?.body ?? ""); } }, [open, editingTextId]);
   function choose(id: string) { setTemplateId(id); const template = templates.find((item) => item.id === id); if (template) { setTitle(template.title); setBody(template.body); } }
-  async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); try { await execute({ type: "addQuoteText", expectedRevision: quote.revision, title, body }, "Texto añadido"); onOpenChange(false); } finally { setBusy(false); } }
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent title="Añadir texto" description="Parte de una plantilla o escribe un bloque exclusivo para este presupuesto." footer={<><DialogClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></DialogClose><RippleButton type="submit" form="add-text-form" disabled={busy || !body.trim()}>{busy ? "Añadiendo…" : "Añadir texto"}</RippleButton></>}><form id="add-text-form" onSubmit={submit} className="form-grid"><div className="field span-2"><label className="field-label" htmlFor="quote-text-template">Plantilla (opcional)</label><SearchableSelect id="quote-text-template" value={templateId} onChange={choose} placeholder="Buscar una plantilla…" clearLabel="Escribir texto libre" options={templates.filter((item) => item.active).map((item) => ({ value: item.id, label: item.title, description: item.body.slice(0, 90) }))} /></div><div className="field span-2"><label className="field-label" htmlFor="quote-text-title">Título</label><input id="quote-text-title" className="input" value={title} onChange={(event) => setTitle(event.target.value)} /></div><div className="field span-2"><label className="field-label" htmlFor="quote-text-body">Contenido</label><textarea id="quote-text-body" className="textarea" value={body} onChange={(event) => setBody(event.target.value)} required /></div></form></DialogContent></Dialog>;
+  async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); try { await execute(editingTextId ? { type: "updateQuoteText", expectedRevision: quote.revision, textId: editingTextId, title, body } : { type: "addQuoteText", expectedRevision: quote.revision, title, body }, editingTextId ? "Texto actualizado" : "Texto añadido"); onOpenChange(false); } finally { setBusy(false); } }
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent title={editingTextId ? "Editar texto" : "Añadir texto"} description="Parte de una plantilla o escribe un bloque exclusivo para este presupuesto." footer={<><DialogClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></DialogClose><RippleButton type="submit" form="add-text-form" disabled={busy || !body.trim()}>{busy ? "Guardando…" : editingTextId ? "Guardar texto" : "Añadir texto"}</RippleButton></>}><form id="add-text-form" onSubmit={submit} className="form-grid"><div className="field span-2"><label className="field-label" htmlFor="quote-text-template">Plantilla (opcional)</label><SearchableSelect id="quote-text-template" value={templateId} onChange={choose} placeholder="Buscar una plantilla…" clearLabel="Escribir texto libre" options={templates.filter((item) => item.active).map((item) => ({ value: item.id, label: item.title, description: item.body.slice(0, 90) }))} /></div><div className="field span-2"><label className="field-label" htmlFor="quote-text-title">Título</label><input id="quote-text-title" className="input" value={title} onChange={(event) => setTitle(event.target.value)} /></div><div className="field span-2"><label className="field-label" htmlFor="quote-text-body">Contenido</label><textarea id="quote-text-body" className="textarea" value={body} onChange={(event) => setBody(event.target.value)} required /></div></form></DialogContent></Dialog>;
 }
 
 async function reorderTexts(quote: QuoteRecord, textId: string, direction: -1 | 1, execute: Execute) {
   if (!quote.texts) return; const index = quote.texts.findIndex((item) => item.id === textId); const target = index + direction; if (target < 0 || target >= quote.texts.length) return; const ordered = [...quote.texts]; [ordered[index], ordered[target]] = [ordered[target]!, ordered[index]!]; await execute({ type: "reorderQuoteTexts", expectedRevision: quote.revision, orderedTextIds: ordered.map((item) => item.id) }, "Textos reordenados");
+}
+
+function DraggableTextBlocks({ quote, execute, onEdit, onReorder }: { quote: QuoteRecord; execute: Execute; onEdit: (textId: string) => void; onReorder: (texts: NonNullable<QuoteRecord["texts"]>) => void }) {
+  const ordered = quote.texts ?? [];
+  const orderedRef = useRef(ordered);
+  const changedRef = useRef(false);
+  orderedRef.current = ordered;
+  return <Reorder.Group axis="y" values={ordered} onReorder={(next) => { if (next.some((item, i) => item.id !== orderedRef.current[i]?.id)) changedRef.current = true; orderedRef.current = next; onReorder(next); }} className="text-blocks" as="div">
+    {ordered.map((text, index) => <SortableTextBlock key={text.id} text={text} index={index} count={ordered.length} quote={quote} execute={execute} onEdit={() => onEdit(text.id)} onDragEnd={() => {
+      const ids = orderedRef.current.map((item) => item.id);
+      if (changedRef.current) { changedRef.current = false; void execute({ type: "reorderQuoteTexts", expectedRevision: quote.revision, orderedTextIds: ids }, "Textos reordenados"); }
+    }} />)}
+  </Reorder.Group>;
+}
+
+function SortableTextBlock({ text, index, count, quote, execute, onEdit, onDragEnd }: { text: NonNullable<QuoteRecord["texts"]>[number]; index: number; count: number; quote: QuoteRecord; execute: Execute; onEdit: () => void; onDragEnd: () => void }) {
+  const controls = useDragControls();
+  return <Reorder.Item value={text} className="text-block" dragListener={false} dragControls={controls} onDragEnd={onDragEnd}>
+    <button type="button" className="text-block-drag-handle" aria-label={`Reordenar ${text.title || "texto"}`} title="Arrastra para ordenar" onPointerDown={(event) => controls.start(event)}><GripVertical /></button>
+    <div><h3>{text.title || "Sin título"}</h3><p>{text.body}</p></div>
+    <DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="button button-ghost button-icon" aria-label="Acciones del texto"><MoreHorizontal /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="dropdown-content" align="end"><DropdownMenu.Item className="dropdown-item" onSelect={onEdit}><PencilLine />Editar</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item" disabled={index === 0} onSelect={() => void reorderTexts(quote, text.id, -1, execute)}><ArrowUp />Subir</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item" disabled={index === count - 1} onSelect={() => void reorderTexts(quote, text.id, 1, execute)}><ArrowDown />Bajar</DropdownMenu.Item><DropdownMenu.Item className="dropdown-item danger" onSelect={() => void execute({ type: "removeQuoteText", expectedRevision: quote.revision, textId: text.id }, "Texto eliminado")}><Trash2 />Eliminar</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
+  </Reorder.Item>;
 }
 
 function EditorSkeleton() {

@@ -6,7 +6,7 @@ import type { HoldedEstimateInput } from "./contracts.js";
 const API_KEY = "super-secret-key-1234";
 const BASE = "https://api.holded.com/api/v2";
 
-const estimateInput: HoldedEstimateInput = { contact_id: "contact", description: "TEST", date: "2026-09-24", currency: "EUR", discount: "0", tax_included: false, items: [{ name: "TEST", units: "3", price: "33.3333333333", discount: "0", taxes: ["real-igic-7"] }] };
+const estimateInput: HoldedEstimateInput = { contact_id: "contact", description: "TEST", date: "2026-09-24", currency: "EUR", discount: "0", tax_included: true, show_total: true, items: [{ name: "TEST", units: "3", price: "33.3333333333", discount: "0", taxes: ["real-igic-7"] }] };
 
 describe("Holded Estimates v2", () => {
   it("POSTs final decimal prices through Bearer v2 and retains real tax keys", async () => {
@@ -17,8 +17,14 @@ describe("Holded Estimates v2", () => {
     expect(request!.method).toBe("POST");
     expect((request!.headers as Record<string, string>).authorization).toBe(`Bearer ${API_KEY}`);
     expect((request!.headers as Record<string, string>).key).toBeUndefined();
-    expect(JSON.parse(request!.body as string)).toMatchObject({ contact_id: "contact", tax_included: false, discount: 0, items: [{ units: 3, price: 33.3333333333, taxes: ["real-igic-7"] }] });
+    expect(JSON.parse(request!.body as string)).toMatchObject({ contact_id: "contact", tax_included: true, show_total: true, discount: 0, items: [{ units: 3, price: 33.3333333333, taxes: ["real-igic-7"] }] });
     expect(result.id).toBe("estimate-1");
+  });
+  it("sends title lines without monetary fields so the PDF cannot show a zero price", async () => {
+    const fetcher = mk(async () => jsonResponse({ id: "estimate-1" }, 201));
+    await client(fetcher).saveEstimate({ ...estimateInput, items: [...estimateInput.items, { name: "Condiciones\nValidez 30 días", type: "title" }] });
+    const body = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
+    expect(body.items[1]).toEqual({ name: "Condiciones\nValidez 30 días", type: "title" });
   });
 
   it("GETs existing estimate before PUT and preserves unrelated remote fields", async () => {
@@ -33,6 +39,19 @@ describe("Holded Estimates v2", () => {
     await client(fetcher).deleteContact("contact-1");
     await client(fetcher).deleteEstimate("estimate-1");
     expect(fetcher.mock.calls.every(([, request]) => request?.method === "DELETE")).toBe(true);
+  });
+  it("downloads and validates the real PDF endpoint with Bearer auth", async () => {
+    const fetcher = mk(async () => new Response(new TextEncoder().encode("%PDF-1.7\nTEST"), { headers: { "content-type": "application/pdf" } }));
+    const bytes = await client(fetcher).getEstimatePdf("estimate-1");
+    expect(new TextDecoder().decode(bytes).startsWith("%PDF-")).toBe(true);
+    expect(fetcher.mock.calls[0]![0]).toBe(`${BASE}/estimates/estimate-1/pdf`);
+    expect((fetcher.mock.calls[0]![1]!.headers as Record<string, string>).authorization).toBe(`Bearer ${API_KEY}`);
+  });
+  it("approves a draft estimate through the documented v2 endpoint", async () => {
+    const fetcher = mk(async () => jsonResponse({ id: "estimate-1" }));
+    await client(fetcher).approveEstimate("estimate-1");
+    expect(fetcher.mock.calls[0]![0]).toBe(`${BASE}/estimates/estimate-1/approve`);
+    expect(fetcher.mock.calls[0]![1]!.method).toBe("POST");
   });
 
   it("rejects malformed inventories instead of treating them as empty and deleting clients", async () => {

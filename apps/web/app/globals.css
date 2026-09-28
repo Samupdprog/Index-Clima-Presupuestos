@@ -2532,6 +2532,40 @@ button {
   border: 1px solid var(--border);
 }
 
+.text-block-drag-handle {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--foreground-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.text-block-drag-handle:active { cursor: grabbing; }
+.text-block[data-dragging="true"] { box-shadow: 0 12px 28px rgba(0, 0, 0, .14); border-color: var(--primary); }
+
+.adjustment-flow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: stretch; margin: 6px 0 16px; }
+.adjustment-flow > div { display: grid; gap: 7px; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-subtle); }
+.adjustment-flow span { color: var(--foreground-muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.adjustment-flow strong { font-size: clamp(22px, 3vw, 32px); }
+.adjustment-flow .adjustment-flow-change { place-content: center; text-align: center; color: var(--primary); background: transparent; border: 0; }
+.adjustment-flow .adjustment-gain { border-color: var(--success); background: var(--success-soft); }
+.adjustment-flow .adjustment-loss { border-color: var(--danger); background: var(--danger-soft); }
+.adjustment-economics { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 0 0 18px; color: var(--foreground-muted); font-size: 13px; }
+.adjustment-economics strong { color: var(--foreground); margin-left: 5px; }
+.adjustment-lines { display: grid; gap: 8px; }
+.adjustment-line { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.adjustment-line summary { display: grid; grid-template-columns: minmax(160px, 2fr) repeat(3, minmax(90px, 1fr)); gap: 12px; align-items: center; cursor: pointer; list-style-position: inside; }
+.adjustment-line summary > span { display: grid; gap: 3px; color: var(--foreground-muted); font-size: 12px; }
+.adjustment-line summary strong { color: var(--foreground); font-size: 14px; }
+.adjustment-line-detail { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 12px 0 2px; color: var(--foreground-muted); font-size: 12px; }
+@media (max-width: 700px) { .adjustment-flow { grid-template-columns: 1fr; } .adjustment-line summary { grid-template-columns: repeat(3, 1fr); } .adjustment-line summary > span:first-child { grid-column: 1 / -1; } }
+
 .text-block h3 {
   margin: 0 0 3px;
   font-size: 13px;

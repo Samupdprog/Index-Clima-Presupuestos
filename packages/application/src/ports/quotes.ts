@@ -15,6 +15,7 @@ export interface QuoteRecord {
   holdedEstimateId?: string | null;
   calculation?: unknown;
   lines: unknown[];
+  texts?: Array<{ id: string; position: number; title: string | null; body: string }>;
   priceAdjustments?: unknown[];
 }
 

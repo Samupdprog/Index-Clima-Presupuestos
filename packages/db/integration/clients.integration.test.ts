@@ -364,7 +364,8 @@ describe("quote vertical workflow integration", () => {
     const runs = await db.select().from(quoteCalculationRuns).where(eq(quoteCalculationRuns.quoteId, quoteId));
     const run = runs.sort((left, right) => right.quoteRevision - left.quoteRevision)[0];
     expect(run?.saleWithoutTax).toBe("580.00");
-    expect(run?.taxTotal).toBe("19.78");
+    // Equal allocation remainders go to the first visible line, independent of UUID.
+    expect(run?.taxTotal).toBe("19.79");
     expect(await db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, quoteId))).toHaveLength(9);
     const events = await db.select().from(auditEvents).where(eq(auditEvents.entityId, quoteId));
     expect(events).toHaveLength(10);

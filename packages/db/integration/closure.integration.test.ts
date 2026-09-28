@@ -39,6 +39,13 @@ describe("functional closure against PostgreSQL", () => {
     const updated = (await quotes.getQuoteById(installationId, quoteId))!;
     for (const line of preview.lines) expect(updated.calculation.lines.find((item) => item.id === line.id)!.sale).toBe(line.saleAfter);
     expect(updated.calculation.saleWithoutTax).toBe("6049.38");
+    const baseline = await previewPriceAdjustment(quotes)(installationId, quoteId, { ...request, expectedRevision: updated.revision, value: "0" });
+    expect(baseline.totals.saleBefore).toBe("2843.94");
+    expect(baseline.totals.saleAfter).toBe("2843.94");
+    expect(baseline.totals.allocatedAdjustment).toBe("0.00");
+    const next = await previewPriceAdjustment(quotes)(installationId, quoteId, { ...request, expectedRevision: updated.revision, value: "100" });
+    expect(next.totals.saleBefore).toBe("2843.94");
+    expect(next.totals.saleAfter).toBe("2943.94");
     await expect(previewPriceAdjustment(quotes)(installationId, quoteId, request)).rejects.toThrow("revision_conflict");
     expect(await quotes.getQuoteById(otherId, quoteId)).toBeNull();
   });

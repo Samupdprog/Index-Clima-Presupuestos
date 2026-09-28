@@ -31,3 +31,6 @@ descuentos, empleados, textos y ajustes con nuevas referencias y recálculo.
 Validación: regresiones de cinco materiales con coste 5749,38, 40+10=46%, N
 descuentos, cantidades, reconstrucción de tarifa, márgenes e IGIC separado,
 repartos de pocos céntimos, cero venta y preview frente a cálculo final.
+# Cierre de reparto de céntimos
+
+Cuando un ajuste proporcional deja el mismo resto fraccionario en varias líneas, el céntimo restante corresponde a la primera línea según el orden visible del presupuesto. El identificador aleatorio de la línea no interviene. El IGIC se redondea por línea después del reparto; por ello el total de impuesto puede diferir un céntimo respecto de una asignación arbitraria previa.

@@ -1,6 +1,7 @@
 /** Explicit live smoke: creates only uniquely named TEST entities and cleans them up. Run inside the API container. */
 import assert from "node:assert/strict";
 import { createHash, createDecipheriv, randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import pg from "pg";
 import { createHoldedClient } from "../packages/holded/src/client.js";
 import { mergeLocalChangesIntoHoldedContact } from "../packages/holded/src/mapping.js";
@@ -55,6 +56,13 @@ try {
   assert.equal(preview.totals.saleAfter, "6049.38");
   await api(`/quotes/${quoteId}/commands`, "POST", { ...adjustment, type: "addPriceAdjustment" });
   quote = await api(`/quotes/${quoteId}`); assert.equal(quote.calculation.saleWithoutTax, "6049.38"); results.push("five machines + backend preview/apply");
+  await api(`/quotes/${quoteId}/commands`, "POST", { type: "addQuoteText", expectedRevision: quote.revision, title: "Trabajos incluidos", body: "Instalación y puesta en marcha." });
+  quote = await api(`/quotes/${quoteId}`);
+  await api(`/quotes/${quoteId}/commands`, "POST", { type: "addQuoteText", expectedRevision: quote.revision, title: "Condiciones", body: "Validez 30 días." });
+  quote = await api(`/quotes/${quoteId}`);
+  await api(`/quotes/${quoteId}/commands`, "POST", { type: "reorderQuoteTexts", expectedRevision: quote.revision, orderedTextIds: [quote.texts[1].id, quote.texts[0].id] });
+  quote = await api(`/quotes/${quoteId}`);
+  assert.deepEqual(quote.texts.map((text: any) => text.title), ["Condiciones", "Trabajos incluidos"]);
   try { quote = await api(`/quotes/${quoteId}/holded`, "POST", { expectedRevision: quote.revision }); }
   catch (error) {
     const failed = await api(`/quotes/${quoteId}`);
@@ -68,9 +76,23 @@ try {
   estimateId = quote.holdedEstimateId;
   assert(estimateId); assert.equal(quote.holdedSyncStatus, "synced");
   const estimate = await holded.getEstimate(estimateId!);
+  assert.equal(estimate.document_number, quote.reference);
+  assert.deepEqual(estimate.lines.map((line: any) => line.name), quote.lines.map((line: any) => line.description));
+  assert.equal(estimate.notes, "Condiciones\nValidez 30 días.\n\nTrabajos incluidos\nInstalación y puesta en marcha.");
   assert.equal(estimate.subtotal.replace(",", "."), quote.calculation.saleWithoutTax); assert.equal(estimate.tax.replace(",", "."), quote.calculation.taxTotal); assert.equal(estimate.total.replace(",", "."), quote.calculation.saleWithTax);
+  const initialPdf = await holded.getEstimatePdf(estimateId!);
+  results.push(`Initial PDF downloaded (${initialPdf.length} bytes); number=${estimate.document_number}; order=${estimate.lines.map((line: any) => line.name).join(" > ")}`);
   results.push(`Estimate v2 created; sales=${quote.calculation.saleWithoutTax}; IGIC=${quote.calculation.taxTotal}; total=${quote.calculation.saleWithTax}`);
-  quote = await api(`/quotes/${quoteId}/holded`, "POST", { expectedRevision: quote.revision }); assert.equal(quote.holdedEstimateId, estimateId); results.push("Estimate update/retry keeps same ID");
+  await api(`/quotes/${quoteId}/commands`, "POST", { type: "updateQuoteText", expectedRevision: quote.revision, textId: quote.texts[0].id, title: "Condiciones", body: "Validez 45 días." });
+  quote = await api(`/quotes/${quoteId}`);
+  quote = await api(`/quotes/${quoteId}/holded`, "POST", { expectedRevision: quote.revision }); assert.equal(quote.holdedEstimateId, estimateId);
+  const updated = await holded.getEstimate(estimateId!);
+  assert.equal(updated.notes, "Condiciones\nValidez 45 días.\n\nTrabajos incluidos\nInstalación y puesta en marcha.");
+  assert.deepEqual(updated.lines.map((line: any) => line.name), estimate.lines.map((line: any) => line.name));
+  assert.equal(updated.document_number, quote.reference);
+  const pdf = await holded.getEstimatePdf(estimateId!);
+  await writeFile("/tmp/holded-live-estimate.pdf", pdf);
+  results.push(`Estimate PUT kept same ID; updated text persisted; final PDF ${pdf.length} bytes`);
   await holded.deleteEstimate(estimateId!); estimateId = undefined;
   }
   client = await api(`/clients/${client.id}`);

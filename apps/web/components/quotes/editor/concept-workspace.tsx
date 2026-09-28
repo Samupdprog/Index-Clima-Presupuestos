@@ -42,7 +42,7 @@ import type {
   SaleRule,
   TravelRecord,
 } from "../../../lib/api/types";
-import { formatMoney, formatNumber } from "../../../lib/format";
+import { formatDecimalInput, formatMoney, formatNumber } from "../../../lib/format";
 import styles from "./concept-workspace.module.css";
 import { useLinePreview } from "./use-line-preview";
 
@@ -1536,11 +1536,11 @@ function decimalOrZero(value: string) {
 }
 
 function toInputDecimal(value: string | number | null | undefined) {
-  return normalizeDecimal(value);
+  return formatDecimalInput(value);
 }
 
 function normalizedRate(value: string | null | undefined) {
-  return (toInputDecimal(value) || "7").replace(/\.0+$/, "");
+  return toInputDecimal(value) || "7";
 }
 
 function parseDiscounts(value: string) {

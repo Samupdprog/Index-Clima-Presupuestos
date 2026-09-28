@@ -72,26 +72,21 @@ export interface HoldedTax {
 }
 
 /** Monetary strings remain canonical until JSON serialization at the HTTP boundary. */
-export interface HoldedEstimateItem {
-  name: string;
-  description?: string;
-  type?: "product" | "service" | "title";
-  units: string;
-  price: string;
-  discount: string;
-  taxes: string[];
-  unit_type?: string;
-}
+export type HoldedEstimateItem =
+  | { name: string; type: "title" }
+  | { name: string; description?: string; type?: "product" | "service"; units: string; price: string; discount: string; taxes: string[]; unit_type?: string };
 
 export interface HoldedEstimateInput {
   contact_id: string;
   description: string;
   date: string;
+  number?: string;
   notes?: string;
   tags?: string[];
   currency: "EUR";
   discount: string;
-  tax_included: false;
+  tax_included: true;
+  show_total: true;
   items: HoldedEstimateItem[];
 }
 
@@ -101,7 +96,7 @@ export interface HoldedEstimate {
   subtotal: string;
   tax: string;
   total: string;
-  lines: Array<{ name: string; units: string; price: string; discount: string; tax: string; taxes: string[] }>;
+  lines: Array<{ name: string; type?: string; units: string | null; price: string | null; discount: string | null; tax: string | null; taxes: string[] }>;
   [key: string]: unknown;
 }
 

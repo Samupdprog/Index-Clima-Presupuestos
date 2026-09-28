@@ -224,12 +224,12 @@ export function allocateProportionalAdjustment(
   }
   const sign = target.isNegative() ? -1 : 1;
   const cents = target.abs().times(100);
-  const shares = eligible.map((line) => {
+  const shares = eligible.map((line, index) => {
     const exact = total.isZero() ? cents.div(eligible.length) : cents.times(line.sale).div(total);
-    return { id: line.id, cents: exact.floor(), remainder: exact.minus(exact.floor()) };
+    return { id: line.id, index, cents: exact.floor(), remainder: exact.minus(exact.floor()) };
   });
   let remaining = cents.minus(shares.reduce((sum, share) => sum.plus(share.cents), money(0)));
-  shares.sort((a, b) => b.remainder.comparedTo(a.remainder) || a.id.localeCompare(b.id, "en"));
+  shares.sort((a, b) => b.remainder.comparedTo(a.remainder) || a.index - b.index);
   for (const share of shares) {
     if (remaining.gt(0)) { share.cents = share.cents.plus(1); remaining = remaining.minus(1); }
     result.set(share.id, share.cents.times(sign).div(100));

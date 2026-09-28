@@ -28,7 +28,7 @@ npm audit
 docker compose ps
 ```
 
-En Windows PowerShell, `${PWD}` representa el directorio actual. La prueba real de Holded está en `scripts/live-holded-smoke.ts`; se ejecuta deliberadamente dentro de API con `npx esbuild ...` y crea solo clientes/Estimates `TEST`, que intenta borrar al finalizar. La prueba MCP está en `scripts/live-mcp-smoke.mjs` y también archiva su presupuesto `TEST`. Revisa entidades `TEST` si un proceso se interrumpe antes de ejecutar su limpieza.
+En Windows PowerShell, `${PWD}` representa el directorio actual. `npm run test:holded-live` empaqueta `scripts/live-holded-smoke.ts`, lo ejecuta dentro de API para usar la conexión Holded cifrada y copia el PDF final a `test-results/holded-live-estimate.pdf`. Crea solo clientes/Estimates `TEST`, que intenta borrar al finalizar. La sincronización aprueba el borrador de Estimate para que el número local aparezca en el PDF; no envía correo. La plantilla actual de Holded muestra el precio unitario sin IGIC y el total de línea con IGIC, aunque `tax_included` es `true`. La prueba MCP está en `scripts/live-mcp-smoke.mjs` y también archiva su presupuesto `TEST`. Revisa entidades `TEST` si un proceso se interrumpe antes de ejecutar su limpieza.
 
 Para probar el MCP autenticado en un solo comando desde PowerShell:
 

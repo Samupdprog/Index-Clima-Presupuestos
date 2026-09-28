@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { PriceAdjustmentPreview, QuoteCommand, PreviewPriceAdjustmentRequest } from "@quotes/contracts";
 import { api, ApiError } from "../../lib/api/client";
 import type { QuoteRecord } from "../../lib/api/types";
-import { formatMoney, formatNumber } from "../../lib/format";
+import { formatAdjustment, formatMoney, formatMoneyCompact, formatNumber, formatPercentage } from "../../lib/format";
 import { Dialog, DialogClose, DialogContent } from "../animate-ui/overlay";
 import { RippleButton } from "../animate-ui/ripple-button";
 
@@ -42,7 +42,7 @@ export function AdjustmentDialog({ open, onOpenChange, quote, execute }: { open:
     catch (cause) { setError(cause instanceof ApiError && cause.isRevisionConflict ? "El presupuesto cambió; recarga antes de aplicar." : "No se guardó el ajuste. Puedes volver a intentarlo."); }
     finally { setBusy(false); }
   }
-  const pct = (number: string | null) => number === null ? "—" : `${formatNumber(number)} %`;
+  const pct = formatPercentage;
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent wide title="Ajustar precio" description="Revisa el reparto y el beneficio calculados por el servidor antes de aplicar." footer={<><DialogClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></DialogClose><RippleButton type="submit" form="adjustment-form" disabled={busy || !value.trim() || !preview || Boolean(error)}>{busy ? "Aplicando…" : "Aplicar ajuste"}</RippleButton></>}>
     <form id="adjustment-form" onSubmit={submit} className="form-grid">
       <label className="field"><span className="field-label">Aplicar a</span><select className="select" value={scope} onChange={(event) => setScope(event.target.value as typeof scope)}><option value="quote">Presupuesto completo</option><option value="selection">Selección de líneas</option></select></label>
@@ -52,16 +52,16 @@ export function AdjustmentDialog({ open, onOpenChange, quote, execute }: { open:
       {error ? <p role="alert" className="error-text span-2">{error}</p> : null}
       {!preview && !error ? <p role="status" className="span-2">{scope === "selection" && !selected.length ? "Selecciona al menos una línea." : "Calculando previsualización…"}</p> : null}
       {preview ? <div className="span-2" aria-live="polite">
-        <div className="adjustment-totals">{[
-          ["Coste seleccionado", formatMoney(preview.totals.costBefore)], ["Precio actual seleccionado", formatMoney(preview.totals.saleBefore)],
-          ["Ajuste", formatMoney(preview.totals.allocatedAdjustment)], ["Nuevo precio", formatMoney(preview.totals.saleAfter)],
-          ["Beneficio antes", formatMoney(preview.totals.profitBefore)], ["Beneficio después", formatMoney(preview.totals.profitAfter)],
-          ["Margen antes", pct(preview.totals.marginBefore)], ["Margen después", pct(preview.totals.marginAfter)],
-        ].map(([label, amount]) => <div key={label}><span>{label}</span><strong>{amount}</strong></div>)}</div>
-        <div className="table-wrap"><table className="data-table adjustment-table"><thead><tr><th>Concepto / cantidad</th><th>Coste / ud · total</th><th>Venta actual / ud · total</th><th>Beneficio · margen antes</th><th>Ajuste</th><th>Nueva venta / ud · total</th><th>Beneficio · margen después</th></tr></thead><tbody>{preview.lines.map((line) => <tr key={line.id}><td>{line.description}<small>{formatNumber(line.quantity)} unidades</small></td><td>{formatMoney(line.unitCost)}<strong>{formatMoney(line.costBefore)}</strong></td><td>{formatMoney(line.saleUnitBefore)}<strong>{formatMoney(line.saleBefore)}</strong></td><td>{formatMoney(line.profitBefore)}<small>{pct(line.marginBefore)}</small></td><td>{formatMoney(line.allocatedAdjustment)}</td><td>{formatMoney(line.saleUnitAfter)}<strong>{formatMoney(line.saleAfter)}</strong></td><td>{formatMoney(line.profitAfter)}<small>{pct(line.marginAfter)}</small></td></tr>)}</tbody></table></div>
+        <div className="adjustment-flow">
+          <div><span>ANTES · Precio actual</span><strong>{formatMoneyCompact(preview.totals.saleBefore)}</strong></div>
+          <div className="adjustment-flow-change"><span>AJUSTE</span><strong>{formatMoneyCompact(preview.totals.allocatedAdjustment)}</strong></div>
+          <div className={Number(preview.totals.profitAfter) < 0 ? "adjustment-loss" : "adjustment-gain"}><span>DESPUÉS · Nuevo precio</span><strong>{formatMoneyCompact(preview.totals.saleAfter)}</strong></div>
+        </div>
+        <div className="adjustment-economics"><span>Coste seleccionado <strong>{formatMoney(preview.totals.costBefore)}</strong></span><span>Beneficio <strong>{formatMoney(preview.totals.profitBefore)} → {formatMoney(preview.totals.profitAfter)}</strong></span><span>Margen <strong>{pct(preview.totals.marginBefore)} → {pct(preview.totals.marginAfter)}</strong></span></div>
+        <div className="adjustment-lines">{preview.lines.map((line) => <details key={line.id} className="adjustment-line"><summary><span><strong>{line.description}</strong><small>{formatNumber(line.quantity)} unidades</small></span><span>Antes <strong>{formatMoneyCompact(line.saleBefore)}</strong></span><span>Ajuste <strong>{formatMoneyCompact(line.allocatedAdjustment)}</strong></span><span>Después <strong>{formatMoneyCompact(line.saleAfter)}</strong></span></summary><div className="adjustment-line-detail"><span>Coste: {formatMoney(line.unitCost)} / ud · {formatMoney(line.costBefore)} total</span><span>Venta / ud: {formatMoney(line.saleUnitBefore)} → {formatMoney(line.saleUnitAfter)}</span><span>Beneficio: {formatMoney(line.profitBefore)} → {formatMoney(line.profitAfter)}</span><span>Margen: {pct(line.marginBefore)} → {pct(line.marginAfter)}</span></div></details>)}</div>
         <p className="field-hint">Todos los precios y beneficios se muestran sin IGIC. Margen = beneficio sobre venta.</p>
       </div> : null}
     </form>
-    {quote.priceAdjustments?.length ? <details className="adjustment-history"><summary>Ajustes guardados</summary>{quote.priceAdjustments.map((adjustment) => <div key={adjustment.id}><span>{adjustment.scope} · {adjustment.mode} · {adjustment.value}</span><button type="button" className="button button-ghost" disabled={busy} onClick={() => { setBusy(true); void execute({ type: "removePriceAdjustment", expectedRevision: quote.revision, adjustmentId: adjustment.id }, "Ajuste retirado").catch(() => setError("No se pudo retirar el ajuste.")).finally(() => setBusy(false)); }}>Retirar ajuste</button></div>)}</details> : null}
+    {quote.priceAdjustments?.length ? <details className="adjustment-history" open><summary>Ajustes aplicados</summary>{quote.priceAdjustments.map((adjustment) => <div key={adjustment.id}><span>{formatAdjustment(adjustment)}</span><button type="button" className="button button-ghost" disabled={busy} onClick={() => { setBusy(true); void execute({ type: "removePriceAdjustment", expectedRevision: quote.revision, adjustmentId: adjustment.id }, "Ajuste retirado").catch(() => setError("No se pudo retirar el ajuste.")).finally(() => setBusy(false)); }}>Retirar ajuste</button></div>)}</details> : null}
   </DialogContent></Dialog>;
 }

@@ -11,13 +11,15 @@ export function createHoldedEstimateGateway(client: HoldedClient): EstimateGatew
   return {
     listTaxes: () => client.listTaxes(),
     saveEstimate: (input, id) => client.saveEstimate(input, id),
+    approveEstimate: (id) => client.approveEstimate(id),
+    getEstimatePdf: (id) => client.getEstimatePdf(id),
     async getEstimate(id) {
       const remote = await client.getEstimate(id);
       if (!Array.isArray(remote.lines)) throw new HoldedApiError("invalid_response");
       return {
         ...remote,
         subtotal: decimalFromHolded(remote.subtotal), tax: decimalFromHolded(remote.tax), total: decimalFromHolded(remote.total),
-        lines: remote.lines.map((line) => ({ ...line, price: decimalFromHolded(line.price), units: decimalFromHolded(line.units), discount: decimalFromHolded(line.discount ?? "0"), tax: decimalFromHolded(line.tax ?? "0"), taxes: Array.isArray(line.taxes) ? line.taxes : [] })),
+        lines: remote.lines.map((line) => line.type === "title" ? { ...line, price: "0", units: "0", discount: "0", tax: "0", taxes: [] } : ({ ...line, price: decimalFromHolded(line.price), units: decimalFromHolded(line.units), discount: decimalFromHolded(line.discount ?? "0"), tax: decimalFromHolded(line.tax ?? "0"), taxes: Array.isArray(line.taxes) ? line.taxes : [] })),
       };
     },
     async findEstimateByTag(tag, contactId) {

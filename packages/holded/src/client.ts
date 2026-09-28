@@ -216,13 +216,38 @@ export function createHoldedClient(options: HoldedClientOptions) {
       return body;
     },
 
+    async approveEstimate(id: string): Promise<void> {
+      await request("POST", `/estimates/${encodeURIComponent(id)}/approve`);
+    },
+
+    async getEstimatePdf(id: string): Promise<Uint8Array> {
+      const path = `/estimates/${encodeURIComponent(id)}/pdf`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const startedAt = Date.now();
+      try {
+        const response = await fetcher(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${apiKey}`, accept: "application/pdf" }, signal: controller.signal });
+        if (!response.ok) {
+          log({ method: "GET", path, status: response.status, code: mapStatusToErrorCode(response.status), ok: false, durationMs: Date.now() - startedAt });
+          throw new HoldedApiError(mapStatusToErrorCode(response.status), response.status);
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (!response.headers.get("content-type")?.includes("application/pdf") || bytes.length < 5 || new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") throw new HoldedApiError("invalid_response", response.status);
+        log({ method: "GET", path, status: response.status, ok: true, durationMs: Date.now() - startedAt });
+        return bytes;
+      } catch (error) {
+        if (error instanceof HoldedApiError) throw error;
+        throw new HoldedApiError(error instanceof Error && error.name === "AbortError" ? "timeout" : "network_error");
+      } finally { clearTimeout(timer); }
+    },
+
     async saveEstimate(input: HoldedEstimateInput, documentId?: string | null) {
       // Conversion to JSON numbers is only transport encoding; no monetary arithmetic here.
       const encodeDecimal = (value: string) => {
         if (!/^-?\d+(?:\.\d+)?$/.test(value) || !Number.isFinite(Number(value))) throw new HoldedApiError("unprocessable");
         return Number(value);
       };
-      const items = input.items.map((item) => ({ ...item, units: encodeDecimal(item.units), price: encodeDecimal(item.price), discount: encodeDecimal(item.discount) }));
+      const items = input.items.map((item) => item.type === "title" ? item : ({ ...item, units: encodeDecimal(item.units), price: encodeDecimal(item.price), discount: encodeDecimal(item.discount) }));
       let existing: Record<string, unknown> = {};
       if (documentId) {
         existing = { ...await client.getEstimate(documentId) };

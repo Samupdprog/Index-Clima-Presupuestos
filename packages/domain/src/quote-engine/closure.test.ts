@@ -33,5 +33,7 @@ describe("functional pricing regression", () => {
     const result = calculateQuote(lines, [operation]); expect(result.subtotal.toString()).toBe("3.01");
     expect(calculateQuote(lines, [operation]).lines.map((line) => line.sale.toString())).toEqual(result.lines.map((line) => line.sale.toString()));
     expect(() => calculateQuote(lines, [{ ...operation, scope: "selection", targetLineIds: ["missing"] }])).toThrow("adjustment_target_not_found");
+    const reversedIds = ["z", "y", "x"].map((id) => material({ id, supplierUnitPrice: "1", supplierDiscounts: [] }));
+    expect(calculateQuote(reversedIds, [operation]).lines.map((line) => line.adjustment.toFixed(2))).toEqual(["0.01", "0.00", "0.00"]);
   });
 });
