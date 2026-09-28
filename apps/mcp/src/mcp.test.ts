@@ -42,7 +42,7 @@ async function rpcBody(response: Response) {
 describe("MCP transport and permissions", () => {
   it("stays healthy when disabled and does not expose tools", async () => {
     const base = await serve({ enabled: false, authToken: "" });
-    expect(await (await fetch(`${base}/health`)).json()).toEqual({ status: "disabled", service: "mcp", toolsEnabled: false });
+    expect(await (await fetch(`${base}/health`)).json()).toEqual({ status: "disabled", service: "mcp", toolsEnabled: false, authMode: "bearer" });
     expect((await request(base, "tools/list")).status).toBe(404);
   });
   it("reports invalid configuration without exiting or exposing tools", async () => {
@@ -81,8 +81,8 @@ describe("MCP transport and permissions", () => {
   it("lists every strict tool with output schema and the AI guide", async () => {
     const base = await serve();
     const body = await rpcBody(await request(base, "tools/list"));
-    expect(body.result.tools).toHaveLength(generatorTools.length);
-    for (const tool of body.result.tools) {
+    expect(body.result.tools).toHaveLength(generatorTools.length + 1);
+    for (const tool of body.result.tools.filter((entry: { name: string }) => entry.name !== "get_mcp_profile")) {
       expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tool.outputSchema.properties).toHaveProperty("error");
       expect(tool.outputSchema.properties).toHaveProperty("data");
@@ -97,7 +97,7 @@ describe("MCP transport and permissions", () => {
     const response = await request(base, "tools/list", { _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientInfo": { name: "test-client", version: "1.0" }, "io.modelcontextprotocol/clientCapabilities": {} } }, { "mcp-protocol-version": "2026-07-28", "mcp-method": "tools/list" });
     const body = await rpcBody(response);
     expect(response.status).toBe(200);
-    expect(body.result.tools).toHaveLength(generatorTools.length);
+    expect(body.result.tools).toHaveLength(generatorTools.length + 1);
   });
 });
 

@@ -118,7 +118,7 @@ describe("scopes over the authenticated MCP transport", () => {
     for (const [name, args] of [["sync_quote_to_holded", { quoteId, expectedRevision: 1 }], ["create_client", { name: "TEST" }], ["create_quote", { title: "TEST" }]] as const) {
       const denied = await call(base, name, args);
       expect(denied.status).toBe(403);
-      expect(denied.body).toMatchObject({ error: "insufficient_scope" });
+      expect(denied.body.result).toMatchObject({ isError: true, _meta: { "mcp/www_authenticate": [expect.stringContaining('error="insufficient_scope"')] } });
     }
     expect(api.request).toHaveBeenCalledTimes(1);
   });
