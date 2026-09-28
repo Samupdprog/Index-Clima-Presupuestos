@@ -90,14 +90,60 @@ export interface HoldedEstimateInput {
   items: HoldedEstimateItem[];
 }
 
+/**
+ * Estimate v2 (GET). Campos del OpenAPI oficial; la API real devuelve además
+ * `body` (texto enriquecido, que tratamos como SOLO LECTURA) y a veces importes
+ * con coma decimal o como number: se normalizan en el adaptador, nunca aquí.
+ */
+export interface HoldedEstimateLine {
+  line_id?: string | null;
+  name: string;
+  type?: string;
+  description?: string | null;
+  units: string | number | null;
+  price: string | number | null;
+  discount: string | number | null;
+  tax: string | number | null;
+  taxes: string[];
+  unit_type?: string;
+  sku?: string | null;
+  product_id?: string | null;
+  service_id?: string | null;
+  supplied?: boolean;
+  [key: string]: unknown;
+}
+
 export interface HoldedEstimate {
   id: string;
   contact_id: string;
+  document_number?: string | null;
+  contact_name?: string | null;
+  description?: string | null;
+  date?: string | number | null;
+  due_date?: string | number | null;
+  status?: string | null;
+  draft?: boolean | null;
+  currency?: string | null;
   subtotal: string;
+  discount?: string | number | null;
   tax: string;
   total: string;
-  lines: Array<{ name: string; type?: string; units: string | null; price: string | null; discount: string | null; tax: string | null; taxes: string[] }>;
+  tags?: string[];
+  notes?: string | null;
+  body?: unknown;
+  language?: string | null;
+  approved_at?: string | null;
+  custom_fields?: Array<{ field?: unknown; value?: unknown }>;
+  from?: { id?: unknown; doc_type?: unknown } | null;
+  lines: HoldedEstimateLine[];
   [key: string]: unknown;
+}
+
+/** Envelope oficial del listado v2 de Estimates. */
+export interface HoldedEstimateListResponse {
+  items: HoldedEstimate[];
+  cursor: string | null;
+  has_more: boolean;
 }
 
 /** Resultado normalizado de create/update. */

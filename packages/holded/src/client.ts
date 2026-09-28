@@ -1,6 +1,7 @@
 import {
   type HoldedContact,
   type HoldedEstimate,
+  type HoldedEstimateListResponse,
   type HoldedEstimateInput,
   type HoldedTax,
   type HoldedContactListResponse,
@@ -201,13 +202,15 @@ export function createHoldedClient(options: HoldedClientOptions) {
       return body.items;
     },
 
-    async listEstimatesPage(params: { cursor?: string; contactId?: string } = {}) {
-      const search = new URLSearchParams({ limit: "100" });
+    /** Página cruda de Estimates v2 (`{ items, cursor, has_more }`); límite 1..100, por defecto 100. */
+    async listEstimatesPage(params: { cursor?: string; contactId?: string; limit?: number } = {}) {
+      const search = new URLSearchParams({ limit: String(Math.min(100, Math.max(1, Math.trunc(params.limit ?? 100)))) });
       if (params.cursor) search.set("cursor", params.cursor);
       if (params.contactId) search.set("contact_id", params.contactId);
-      const body = await request<{ items: HoldedEstimate[]; cursor: string | null; has_more: boolean }>("GET", `/estimates?${search}`);
-      if (!body || !Array.isArray(body.items)) throw new HoldedApiError("invalid_response");
-      return body;
+      const body = await request<HoldedEstimateListResponse>("GET", `/estimates?${search}`);
+      if (!body || !Array.isArray(body.items) || body.items.some((item) => !item || typeof item !== "object" || typeof item.id !== "string")) throw new HoldedApiError("invalid_response");
+      if (body.cursor !== null && body.cursor !== undefined && typeof body.cursor !== "string") throw new HoldedApiError("invalid_response");
+      return { items: body.items, cursor: body.cursor ?? null, has_more: body.has_more === true };
     },
 
     async getEstimate(id: string): Promise<HoldedEstimate> {
