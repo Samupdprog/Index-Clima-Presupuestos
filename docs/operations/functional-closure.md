@@ -29,3 +29,11 @@ docker compose ps
 ```
 
 En Windows PowerShell, `${PWD}` representa el directorio actual. La prueba real de Holded está en `scripts/live-holded-smoke.ts`; se ejecuta deliberadamente dentro de API con `npx esbuild ...` y crea solo clientes/Estimates `TEST`, que intenta borrar al finalizar. La prueba MCP está en `scripts/live-mcp-smoke.mjs` y también archiva su presupuesto `TEST`. Revisa entidades `TEST` si un proceso se interrumpe antes de ejecutar su limpieza.
+
+Para probar el MCP autenticado en un solo comando desde PowerShell:
+
+```powershell
+Get-Content scripts/live-mcp-smoke.mjs -Raw | docker compose exec -T mcp node --input-type=module
+```
+
+En este host, Docker Desktop 4.72.0 ha fallado al arrancar por sockets temporales antiguos (`dockerInference` y `engine.sock`). Si reaparece ese error y `docker info` no responde, ejecuta en PowerShell `./scripts/recover-docker-desktop.ps1`. Renombra solo las carpetas temporales de esos sockets y reinicia Docker Desktop; no toca volúmenes ni la base de datos.
