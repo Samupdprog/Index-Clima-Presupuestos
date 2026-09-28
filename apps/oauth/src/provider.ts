@@ -39,7 +39,9 @@ export function createOAuthProvider(config: OAuthServerConfig, adapter: new (nam
     pkce: { required: () => true },
     clientAuthMethods: ["none", "private_key_jwt", "client_secret_basic", "client_secret_post"],
     clientDefaults: { grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", id_token_signed_response_alg: "ES256" },
-    scopes: ["openid", "offline_access"],
+    // Los scopes del MCP son también "supported scope values" del AS: los clientes los envían en DCR
+    // y la metadata (RFC 8414) los anuncia. Los access tokens solo llevan los del recurso.
+    scopes: ["openid", "offline_access", ...config.scopes],
     claims: { openid: ["sub"], profile: ["name"] },
     findAccount: async (_ctx, sub) => sub === accountId ? { accountId, claims: async () => ({ sub: accountId, name: config.ownerUsername }) } : undefined,
     features: {
@@ -86,15 +88,6 @@ export function createOAuthProvider(config: OAuthServerConfig, adapter: new (nam
   const provider = new Provider(config.issuer, configuration);
   // Detrás de Traefik: HTTPS y host los fija el proxy de confianza.
   provider.proxy = true;
-  // La metadata del AS (RFC 8414 / OIDC Discovery) anuncia también los scopes del recurso MCP;
-  // Claude y ChatGPT la consultan para decidir los scopes y si piden offline_access.
-  provider.use(async (ctx, next) => {
-    await next();
-    if (ctx.path === "/.well-known/openid-configuration" && ctx.status === 200 && ctx.body && typeof ctx.body === "object") {
-      const body = ctx.body as Record<string, unknown>;
-      body.scopes_supported = [...new Set([...(body.scopes_supported as string[] ?? []), ...config.scopes])];
-    }
-  });
 
   // Claude Code declara `http://localhost/callback` en su CIMD (cliente web) y usa un puerto efímero:
   // se admite el mismo loopback con cualquier puerto (RFC 8252 §7.3). El resto sigue siendo coincidencia exacta.

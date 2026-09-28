@@ -7,6 +7,6 @@ await build({
   target: "node22",
   format: "esm",
   outfile: "dist/index.mjs",
-  external: ["pg"],
+  external: ["pg", "oidc-provider"],
   banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
 });

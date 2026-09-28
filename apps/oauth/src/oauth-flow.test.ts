@@ -87,8 +87,8 @@ function pkce() {
   return { verifier, challenge: createHash("sha256").update(verifier).digest("base64url") };
 }
 
-async function register(issuer: string, redirectUri: string) {
-  const response = await fetch(`${issuer}/oauth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "TEST MCP client", redirect_uris: [redirectUri], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none" }) });
+async function register(issuer: string, redirectUri: string, scope = "clients:read quotes:read quotes:write holded:read offline_access") {
+  const response = await fetch(`${issuer}/oauth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "TEST MCP client", redirect_uris: [redirectUri], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", scope }) });
   return { status: response.status, body: await response.json() as Record<string, string> };
 }
 
@@ -242,8 +242,14 @@ describe("embedded OAuth 2.1 authorization server", () => {
   it("never issues tokens for scopes above the installation ceiling", async () => {
     const { issuer, resource } = await stack({ MCP_SCOPES: "quotes:read" });
     const redirectUri = "http://127.0.0.1:43213/callback";
-    const client = await register(issuer, redirectUri);
-    const { response, verifier } = await authorize(issuer, resource, client.body.client_id!, redirectUri, { scope: "quotes:read quotes:write holded:write" });
+    // DCR con scopes por encima del techo: rechazado.
+    const greedy = await register(issuer, redirectUri, "quotes:read quotes:write holded:write");
+    expect(greedy.status).toBe(400);
+    expect(greedy.body.error).toBe("invalid_client_metadata");
+    // Autorización pidiendo más del techo: los scopes ajenos se descartan y no llegan al token.
+    const client = await register(issuer, redirectUri, "quotes:read");
+    const { response, verifier, consentHtml } = await authorize(issuer, resource, client.body.client_id!, redirectUri, { scope: "quotes:read quotes:write holded:write" });
+    expect(consentHtml).not.toContain('value="quotes:write"');
     const code = new URL(response.headers.get("location")!).searchParams.get("code")!;
     const tokens = await tokenRequest(issuer, { grant_type: "authorization_code", code, redirect_uri: redirectUri, client_id: client.body.client_id!, code_verifier: verifier, resource });
     expect(decodeJwt(tokens.body.access_token!).scope).toBe("quotes:read");
