@@ -61,6 +61,11 @@ Lee primero:
 
 No se pretende documentar cada línea de código. Se documentan decisiones, contratos, invariantes, flujos y criterios de aceptación.
 
+Para levantar y comprobar la instalación completa con Holded y MCP, sigue
+[cierre funcional](docs/operations/functional-closure.md). Los resultados de
+pruebas unitarias, PostgreSQL, navegador, MCP y Holded real están en el
+[informe de cierre](docs/operations/closure-report-2026-09-28.md).
+
 ## Desarrollo local
 
 Requisitos:
