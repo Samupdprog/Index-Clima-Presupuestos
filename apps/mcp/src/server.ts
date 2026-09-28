@@ -120,7 +120,7 @@ function buildVerifier(options: McpAppOptions, mode: McpAuthMode, publicUrl: URL
     oauth = createJwtTokenVerifier({
       issuer: options.authIssuerUrl,
       resourceUrl: publicUrl.href,
-      jwks: options.authJwks ?? assertSecureUrl(options.authJwksUrl!.trim(), "auth_jwks_url"),
+      jwks: options.authJwks ?? assertSecureUrl(options.authJwksUrl!.trim(), "auth_jwks_url", { allowInternalHttp: true }),
       installationId: options.installationId,
       allowedScopes: scopes,
       allowedSubjects,

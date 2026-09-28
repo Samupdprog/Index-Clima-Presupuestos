@@ -2,8 +2,11 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { OAuthError, OAuthErrorCode, type AuthInfo, type OAuthTokenVerifier } from "@modelcontextprotocol/server";
 import { createRemoteJWKSet, errors as joseErrors, jwtVerify, type JWTVerifyGetKey } from "jose";
 
-export const MCP_SCOPES = ["clients:read", "clients:write", "quotes:read", "quotes:write", "holded:read", "holded:write"] as const;
-export type McpScope = typeof MCP_SCOPES[number];
+import { scopes, type Scope } from "@quotes/auth";
+
+/** Fuente única de scopes, compartida con el Authorization Server (`@quotes/auth`). */
+export const MCP_SCOPES = scopes;
+export type McpScope = Scope;
 
 /**
  * - `bearer`: solo el token estático MCP_AUTH_TOKEN (pruebas, scripts, administración).
@@ -64,12 +67,16 @@ export interface JwtVerifierOptions {
   allowedSubjects?: readonly string[];
 }
 
-/** HTTPS obligatorio salvo en loopback (desarrollo y tests). */
-export function assertSecureUrl(value: string, name: string) {
+/**
+ * HTTPS obligatorio salvo en loopback (desarrollo y tests) y, si se permite, en un
+ * nombre de servicio interno de Docker sin puntos (p. ej. `http://oauth:4003`).
+ */
+export function assertSecureUrl(value: string, name: string, options: { allowInternalHttp?: boolean } = {}) {
   let url: URL;
   try { url = new URL(value); } catch { throw new Error(`invalid_${name}`); }
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw new Error(`${name}_must_use_https`);
+  const internal = options.allowInternalHttp === true && /^[a-z][a-z0-9-]*$/.test(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && (loopback || internal))) throw new Error(`${name}_must_use_https`);
   if (url.hash || url.username || url.password) throw new Error(`invalid_${name}`);
   return url;
 }
