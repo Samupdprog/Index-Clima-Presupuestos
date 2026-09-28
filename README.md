@@ -66,79 +66,50 @@ Para levantar y comprobar la instalación completa con Holded y MCP, sigue
 pruebas unitarias, PostgreSQL, navegador, MCP y Holded real están en el
 [informe de cierre](docs/operations/closure-report-2026-09-28.md).
 
-## Desarrollo local
+## Desarrollo local (hot reload)
 
-Requisitos:
-
-- Node.js 22+
-- npm 11+
-- Docker + Docker Compose
+Requisitos: Node.js 22+, npm 11+ y Docker con Docker Compose.
 
 ```bash
 npm ci
-cp .env.example .env
-```
-
-Para instalar las dependencias después de modificar `package.json`, usa:
-
-```bash
-npm install
-```
-
-Generar un `.env` seguro para una nueva instalación:
-
-```bash
-./scripts/setup-instance.sh \
-  cliente-demo \
-  presupuestos.example.com \
-  mcp.example.com \
-  admin@example.com
-```
-
-Levantar PostgreSQL:
-
-```bash
+cp .env.example .env        # rellena los CHANGE_ME (valores locales)
 docker compose up -d postgres
+docker compose run --rm migrate
 ```
 
-Desarrollo web:
+Cada servicio se arranca con recarga en caliente, sin reconstruir imágenes. `scripts/dev-local.mjs` lee `.env`, traduce `postgres:5432` y `api:4000` a los puertos publicados en `127.0.0.1` y no imprime secretos:
 
 ```bash
-npm run dev:web
+npm run dev:local:api       # 127.0.0.1:${API_PORT}
+npm run dev:local:web       # localhost:${WEB_PORT}
+npm run dev:local:mcp       # 127.0.0.1:${MCP_PORT}
+npm run dev:local:worker    # opcional: reconciliación periódica de contactos
 ```
 
-Otros servicios:
+Los scripts `npm run dev:web|dev:api|dev:mcp|dev:worker` siguen disponibles si prefieres exportar las variables tú mismo.
 
-```bash
-npm run dev:api
-npm run dev:mcp
-npm run dev:worker
-```
-
-Validación completa del monorepo:
+Validación completa del monorepo (typecheck, pruebas y compilación de todos los workspaces):
 
 ```bash
 npm run check
 ```
 
-Este comando ejecuta el typecheck, las pruebas y la compilación de todos los workspaces.
-
 ## Producción
 
-Si el servidor ya tiene Traefik compartido:
+Resumen (detalle en [docs/operations/deployment.md](docs/operations/deployment.md)):
 
 ```bash
+git clone https://github.com/Samupdprog/Index-Clima-Presupuestos.git
+cd Index-Clima-Presupuestos
+./scripts/setup-instance.sh index-clima presupuestos.example.com mcp.example.com admin@example.com
+# revisa .env (INSTALLATION_NAME, COMPOSE_PROFILES, MCP_SCOPES…)
 ./scripts/preflight.sh
-./scripts/deploy.sh
+./scripts/deploy.sh         # build + migraciones automáticas + arranque
 ```
 
-Si el servidor está vacío, primero revisa:
+Después configura la API key de Holded en Configuración → Holded. Las migraciones se aplican solas en cada despliegue antes de arrancar la API. La base de datos vive en un volumen persistente con nombre.
 
-```text
-infra/traefik/README.md
-```
-
-No levantes un segundo Traefik si ya existe uno usando 80/443.
+Si el servidor está vacío, instala antes el Traefik compartido (`infra/traefik/README.md`). No levantes un segundo Traefik si ya existe uno usando 80/443.
 
 ## Auditoría de un servidor
 
@@ -162,16 +133,21 @@ cliente.
 ## Migraciones y pruebas
 
 ```bash
-npm run db:generate
-docker compose run --rm migrate
+npm run db:generate                 # tras cambiar el esquema Drizzle
+docker compose run --rm migrate     # aplica migraciones + installation
 npm run typecheck
 npm test
-npm run test:integration
+npm run test:integration            # PostgreSQL real
 npm run build
 ```
 
 ## Estado actual
 
-Esta rama deja preparada la base técnica. Todavía no implementa la aplicación comercial completa, la sincronización Holded ni el catálogo completo de tools MCP.
+Generador operativo para Index Clima:
 
-El desarrollo funcional debe continuar mediante especificaciones SDD pequeñas y verificables.
+- Clientes locales sincronizados con contactos de Holded v2.
+- Presupuestos con materiales, mano de obra, desplazamientos y otros conceptos; reglas de precio, descuentos encadenados, IGIC y ajustes posteriores con preview. La autoridad económica es el dominio.
+- Revisiones con bloqueo optimista, revisión previa a la exportación, PDF y exportación idempotente al mismo Estimate de Holded.
+- MCP para IA con scopes, que opera el Generador y consulta en solo lectura los Estimates existentes en Holded ([SPEC-011](docs/specs/011-mcp-holded-estimates.md)).
+
+El desarrollo funcional continúa mediante especificaciones SDD pequeñas y verificables en `docs/specs/`.

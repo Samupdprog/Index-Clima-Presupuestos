@@ -22,6 +22,10 @@ Líneas compuestas conservan lista ordenada de descuentos y entradas de trabajo.
 
 Instrucciones de servidor, recurso `generator://guide` y prompt de flujo de presupuesto explican descubrimiento, revisión, datos incompletos, extracción frente a cálculo, revisiones, preview, conflictos y exportación. Borrado y exportación solo ante petición del usuario. Catálogos disponibles mediante lectura, sin escritura indirecta.
 
+## Consulta de Holded
+
+Los Estimates existentes en Holded se consultan con `list_holded_estimates`, `search_holded_estimates` y `get_holded_estimate` (solo `holded:read`). Ver [SPEC-011](011-mcp-holded-estimates.md). La única escritura de Estimates sigue siendo `sync_quote_to_holded`; `retry_holded_sync` se eliminó por duplicar el mismo endpoint.
+
 ## Aceptación
 
 Pruebas de listado y schemas, auth/forbidden/aislamiento, denegación por scope, forwarding tool→API, errores 409/Holded/red, ausencia de secretos, y workflow con cliente MCP real. Live Holded usa ejecución explícita y datos TEST; la suite normal no depende de Holded real.

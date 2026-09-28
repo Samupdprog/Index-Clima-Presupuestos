@@ -51,11 +51,13 @@ Adaptador HTTP.
 
 Traduce HTTP a commands/queries y devuelve respuestas. No calcula precios.
 
+Es la única puerta hacia Holded. Resuelve la API key, que nunca sale del backend, y expone lecturas tipadas de Estimates (`/holded/estimates`) y la exportación (`POST /quotes/:id/holded`).
+
 ### `apps/mcp`
 
 Adaptador MCP remoto.
 
-Valida contratos de tools y llama a la API interna. No dispone de acceso SQL ni contiene reglas de negocio.
+Valida contratos de tools y llama a la API interna. No dispone de acceso SQL ni contiene reglas de negocio. Tampoco llama a Holded: consulta y exporta Estimates solo a través de la API.
 
 Así toda mutación humana o de IA cruza la misma autoridad.
 
