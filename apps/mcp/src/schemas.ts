@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { TOOL_ERROR_CODES } from "./api-client.js";
 
 export const decimalSchema = z.string().regex(/^-?\d+(?:\.\d+)?$/, "Usa un decimal string con punto");
 export const revisionSchema = z.number().int().nonnegative();
@@ -69,8 +70,9 @@ export const reviewOutput = z.object({
 });
 export const syncClientsOutput = z.object({ scanned: z.number().int(), updated: z.number().int(), archived: z.number().int(), conflicts: z.number().int(), syncedAt: z.string() });
 export const errorOutput = z.strictObject({
-  code: z.enum(["invalid_input", "forbidden", "revision_conflict", "not_found", "validation_failed", "holded_failed", "api_unavailable", "api_error", "invalid_api_response"]),
-  message: z.string(), status: z.number().int().optional(), backendCode: z.string().optional(), retryable: z.boolean(),
+  code: z.enum(TOOL_ERROR_CODES),
+  message: z.string(), status: z.number().int().optional(), backendCode: z.string().optional(),
+  holdedCode: z.string().optional(), retryAfterSeconds: z.number().int().nonnegative().optional(), retryable: z.boolean(),
 });
 export function envelopeOutput(data: z.ZodType) {
   return z.strictObject({ ok: z.boolean(), data: data.nullable(), error: errorOutput.nullable() });

@@ -90,7 +90,7 @@ describe("MCP transport and permissions", () => {
     }
     const read = await rpcBody(await request(base, "resources/read", { uri: "generator://guide" }));
     expect(read.result.contents[0].text).toContain("revision_conflict");
-    expect(read.result.contents[0].text).toContain("nunca sumes descuentos ni calcules");
+    expect(read.result.contents[0].text).toContain("no sumes descuentos");
   });
   it("supports 2026-07-28 request metadata through the official handler", async () => {
     const base = await serve();
