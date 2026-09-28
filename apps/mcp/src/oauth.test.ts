@@ -10,6 +10,8 @@ const installationId = "11111111-1111-4111-8111-111111111111";
 const resource = "https://mcp-generador.indexclima.com/mcp";
 const issuer = "https://auth.indexclima.test";
 const staticToken = "test-mcp-access-token-32-characters-long";
+// Las peticiones públicas llegan a través del proxy (Traefik), que añade X-Forwarded-For.
+const PROXIED = { "x-forwarded-for": "203.0.113.7" };
 const serviceToken = "test-api-service-token-32-characters-long";
 const quote = { id: "22222222-2222-4222-8222-222222222222", revision: 0, reference: "TEST-OAUTH", title: "TEST OAuth", status: "draft", origin: "generator", accessMode: "editable", lines: [] };
 
@@ -43,8 +45,8 @@ async function serve(overrides: Partial<McpAppOptions> = {}) {
   if (!address || typeof address === "string") throw new Error("invalid_server_address");
   return { base: `http://127.0.0.1:${address.port}`, api };
 }
-async function rpc(base: string, bearer: string | null, method: string, params: unknown = {}) {
-  const response = await fetch(`${base}/mcp`, { method: "POST", headers: { ...(bearer ? { authorization: `Bearer ${bearer}` } : {}), "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-11-25" }, body: JSON.stringify({ jsonrpc: "2.0", id: 7, method, params }) });
+async function rpc(base: string, bearer: string | null, method: string, params: unknown = {}, extraHeaders: Record<string, string> = PROXIED) {
+  const response = await fetch(`${base}/mcp`, { method: "POST", headers: { ...extraHeaders, ...(bearer ? { authorization: `Bearer ${bearer}` } : {}), "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-11-25" }, body: JSON.stringify({ jsonrpc: "2.0", id: 7, method, params }) });
   const text = await response.text();
   const json = response.headers.get("content-type")?.includes("text/event-stream") ? text.split("\n").find((line) => line.startsWith("data: "))?.slice(6) : text;
   return { status: response.status, challenge: response.headers.get("www-authenticate"), body: json ? JSON.parse(json) : null, text };
@@ -142,9 +144,16 @@ describe("authentication modes", () => {
     expect(parseAuthMode("OAuth")).toBe("oauth");
     expect(() => parseAuthMode("none")).toThrow("invalid_mcp_auth_mode");
   });
-  it("oauth mode never accepts the static token", async () => {
+  it("oauth mode never accepts the static token from the network", async () => {
     const { base } = await serve({ authMode: "oauth" });
     expect((await rpc(base, staticToken, "tools/list")).status).toBe(401);
+    expect((await rpc(base, staticToken, "tools/list", {}, { forwarded: "for=203.0.113.7" })).status).toBe(401);
+  });
+  it("oauth mode keeps the static token only for direct in-container calls (smoke tests)", async () => {
+    const { base } = await serve({ authMode: "oauth" });
+    expect((await rpc(base, staticToken, "tools/list", {}, {})).status).toBe(200);
+    expect((await rpc(base, await token(), "tools/list", {}, {})).status).toBe(200);
+    expect((await rpc(base, "wrong-static-token-with-enough-length-000", "tools/list", {}, {})).status).toBe(401);
   });
   it("hybrid mode accepts both, and a JWT never falls back to the static comparison", async () => {
     const { base } = await serve({ authMode: "hybrid" });
@@ -158,12 +167,12 @@ describe("authentication modes", () => {
     expect((await rpc(base, await token(), "tools/list")).status).toBe(401);
   });
   it.each([
-    [{ authIssuerUrl: undefined }, "auth_issuer_url_required"],
     [{ authJwks: undefined, authJwksUrl: undefined }, "auth_jwks_url_required"],
     [{ authIssuerUrl: "http://auth.example.com" }, "auth_issuer_url_must_use_https"],
     [{ authJwks: undefined, authJwksUrl: "http://auth.example.com/jwks" }, "auth_jwks_url_must_use_https"],
     [{ authMode: "hybrid", authToken: "short" }, "mcp_auth_token_must_have_at_least_32_characters"],
     [{ authMode: "public" }, "invalid_mcp_auth_mode"],
+    [{ authJwks: undefined, authJwksUrl: "http://oauth.example.com/jwks" }, "auth_jwks_url_must_use_https"],
   ])("reports incomplete OAuth configuration in /health without exposing tools", async (overrides, error) => {
     const { base } = await serve(overrides as Partial<McpAppOptions>);
     const health = await fetch(`${base}/health`);
@@ -182,6 +191,10 @@ describe("discovery metadata", () => {
       expect(response.headers.get("access-control-allow-origin")).toBe("*");
       expect(await response.json()).toEqual({ resource, resource_name: "Index Clima · Presupuestos", authorization_servers: [issuer], scopes_supported: [...MCP_SCOPES], bearer_methods_supported: ["header"] });
     }
+  });
+  it("defaults the issuer to the MCP origin (embedded authorization server)", async () => {
+    const { base } = await serve({ authIssuerUrl: "" });
+    expect(await (await fetch(`${base}/.well-known/oauth-protected-resource`)).json()).toMatchObject({ authorization_servers: ["https://mcp-generador.indexclima.com"] });
   });
   it("does not advertise an authorization server in bearer mode", async () => {
     const { base } = await serve({ authMode: "bearer" });
@@ -220,5 +233,12 @@ describe("tool security declarations and profile", () => {
     expect(JSON.parse(profile.body.result.content[0].text)).toEqual(profile.body.result.structuredContent);
     expect(profile.body.result.content[1].text).toContain("quotes:read");
     for (const secret of [first, staticToken, serviceToken]) expect(profile.text).not.toContain(secret);
+  });
+});
+
+describe("internal JWKS", () => {
+  it("accepts an internal Docker service JWKS URL over HTTP", async () => {
+    const { base } = await serve({ authJwks: undefined, authJwksUrl: "http://oauth:4003/oauth/jwks" } as unknown as Partial<McpAppOptions>);
+    expect(await (await fetch(`${base}/health`)).json()).toMatchObject({ status: "ok", authMode: "oauth" });
   });
 });

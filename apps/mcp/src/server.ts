@@ -108,17 +108,16 @@ function exposeTopLevelSecuritySchemes(server: McpServer, schemes: Map<string, u
 }
 
 function buildVerifier(options: McpAppOptions, mode: McpAuthMode, publicUrl: URL, scopes: McpScope[]) {
-  if (options.verifier) return options.verifier;
+  if (options.verifier) return { network: options.verifier, local: options.verifier };
   const bearer = mode !== "oauth"
     ? createLocalTokenVerifier({ token: options.authToken ?? "", resourceUrl: publicUrl.href, principal: { subject: options.subject ?? "local-ai", installationId: options.installationId, scopes } })
     : undefined;
   let oauth: OAuthTokenVerifier | undefined;
   if (mode !== "bearer") {
-    if (!options.authIssuerUrl?.trim()) throw new Error("auth_issuer_url_required");
     if (!options.authJwks && !options.authJwksUrl?.trim()) throw new Error("auth_jwks_url_required");
     const allowedSubjects = options.authAllowedSubjects?.split(/[\s,]+/).filter(Boolean) ?? [];
     oauth = createJwtTokenVerifier({
-      issuer: options.authIssuerUrl,
+      issuer: authIssuer(options, publicUrl),
       resourceUrl: publicUrl.href,
       jwks: options.authJwks ?? assertSecureUrl(options.authJwksUrl!.trim(), "auth_jwks_url", { allowInternalHttp: true }),
       installationId: options.installationId,
@@ -126,7 +125,25 @@ function buildVerifier(options: McpAppOptions, mode: McpAuthMode, publicUrl: URL
       allowedSubjects,
     });
   }
-  return createModeTokenVerifier(mode, { ...(bearer ? { bearer } : {}), ...(oauth ? { oauth } : {}) });
+  const network = createModeTokenVerifier(mode, { ...(bearer ? { bearer } : {}), ...(oauth ? { oauth } : {}) });
+  // En modo oauth el token estático solo vale desde el propio contenedor (smoke tests, administración).
+  const localBearer = mode === "oauth" && options.authToken && options.authToken.length >= 32
+    ? createLocalTokenVerifier({ token: options.authToken, resourceUrl: publicUrl.href, principal: { subject: options.subject ?? "local-ai", installationId: options.installationId, scopes } })
+    : undefined;
+  const local = localBearer && oauth ? createModeTokenVerifier("hybrid", { bearer: localBearer, oauth }) : network;
+  return { network, local };
+}
+
+/** Conexión originada dentro del mismo host/contenedor y sin pasar por un proxy. */
+function isDirectLoopback(req: { socket: { remoteAddress?: string | undefined }; headers: Record<string, unknown> }) {
+  const address = req.socket.remoteAddress ?? "";
+  const loopback = address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+  return loopback && !req.headers["x-forwarded-for"] && !req.headers.forwarded && !req.headers["x-real-ip"];
+}
+
+/** Issuer configurado o, con el Authorization Server integrado, el origen público del MCP. */
+function authIssuer(options: McpAppOptions, publicUrl: URL) {
+  return options.authIssuerUrl?.trim() || publicUrl.origin;
 }
 
 /** Solo el método `tools/call` de una petición individual se inspecciona antes del SDK. */
@@ -146,7 +163,7 @@ export function createMcpApplication(options: McpAppOptions) {
   });
   let configurationError: string | undefined;
   let api: GeneratorApi | undefined;
-  let verifier: OAuthTokenVerifier | undefined;
+  let verifier: { network: OAuthTokenVerifier; local: OAuthTokenVerifier } | undefined;
   let authMode: McpAuthMode = "bearer";
   let scopes: McpScope[] = [];
   try {
@@ -174,7 +191,7 @@ export function createMcpApplication(options: McpAppOptions) {
   const protectedResourceMetadata = {
     resource: publicUrl.href,
     resource_name: `${INSTALLATION_NAME} · Presupuestos`,
-    ...(authMode !== "bearer" && options.authIssuerUrl ? { authorization_servers: [options.authIssuerUrl.trim()] } : {}),
+    ...(authMode !== "bearer" ? { authorization_servers: [authIssuer(options, publicUrl)] } : {}),
     scopes_supported: scopes,
     bearer_methods_supported: ["header"],
   };
@@ -193,7 +210,10 @@ export function createMcpApplication(options: McpAppOptions) {
     : undefined;
   if (handler && verifier) {
     const nodeHandler = toNodeHandler(handler);
-    app.all("/mcp", requireBearerAuth({ verifier, resourceMetadataUrl }), (req, res) => {
+    const networkAuth = requireBearerAuth({ verifier: verifier.network, resourceMetadataUrl });
+    const localAuth = verifier.local === verifier.network ? networkAuth : requireBearerAuth({ verifier: verifier.local, resourceMetadataUrl });
+    const authenticate: RequestHandler = (req, res, next) => (isDirectLoopback(req) ? localAuth : networkAuth)(req, res, next);
+    app.all("/mcp", authenticate, (req, res) => {
       if (req.auth?.extra?.installationId !== options.installationId || req.auth.resource?.href !== publicUrl.href) {
         res.status(403).json({ error: "forbidden" });
         return;
