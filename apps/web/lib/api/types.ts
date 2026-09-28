@@ -65,6 +65,12 @@ export interface QuoteLine {
 }
 
 export interface CalculatedLine {
+  costUnit?: string;
+  saleUnit?: string;
+  saleUnitWithTax?: string;
+  effectiveSupplierDiscount?: string;
+  marginOnSalePct?: string | null;
+  profitOnCostPct?: string | null;
   quoteLineId?: string;
   id?: string;
   cost: string;

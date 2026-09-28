@@ -5,6 +5,7 @@ import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { api, type HoldedHealth, type HoldedSettingsResponse } from "../../lib/api/client";
 import { formatDate } from "../../lib/format";
+import { DataResetSettings, HoldedTaxSettings } from "../../components/settings/functional-settings";
 
 type LedTone = "green" | "yellow" | "red" | "gray";
 const LED_COLORS: Record<LedTone, string> = { green: "var(--success)", yellow: "#eab308", red: "var(--danger)", gray: "var(--foreground-muted)" };
@@ -192,6 +193,8 @@ export default function Page() {
       </>}
     </section>
 
+    <HoldedTaxSettings />
+    <DataResetSettings />
     <div className="panel" style={{ marginTop: 24, padding: 20 }}>
       <h2 style={{ margin: "0 0 7px", fontSize: 15 }}>Index Clima Presupuestos</h2>
       <p style={{ margin: 0, color: "var(--foreground-muted)" }}>El motor económico y la persistencia viven en el backend. La interfaz nunca sustituye sus cálculos.</p>

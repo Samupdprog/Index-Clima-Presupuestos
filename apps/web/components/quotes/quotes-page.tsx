@@ -143,7 +143,7 @@ export function QuotesPage() {
 
   async function duplicate(quote: QuoteRecord) {
     try {
-      const copy = await api.duplicateQuote(quote.id);
+      const copy = await api.duplicateQuote(quote.id, quote.revision);
       push("Presupuesto duplicado");
       router.push(`/presupuestos/${copy.id}`);
     } catch {

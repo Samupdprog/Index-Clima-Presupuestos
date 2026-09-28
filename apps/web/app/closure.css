@@ -1,0 +1,21 @@
+.editor-section-toggle { display:flex; align-items:center; justify-content:space-between; flex:1; gap:16px; padding:0; border:0; background:transparent; color:inherit; text-align:left; cursor:pointer; }
+.editor-section-toggle strong { font-size:15px; }
+.editor-section-toggle small { display:block; margin-top:5px; color:var(--foreground-muted); }
+.editor-section-toggle svg { width:18px; height:18px; transform:rotate(-90deg); transition:transform .15s; }
+.editor-section-toggle svg[data-open] { transform:rotate(0); }
+.editor-section-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:5px; }
+.adjustment-selection { border:1px solid var(--border); border-radius:10px; padding:12px; display:grid; gap:8px; }
+.adjustment-selection label { display:flex; gap:9px; align-items:center; }
+.adjustment-totals { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:8px 0 20px; }
+.adjustment-totals div { display:grid; gap:5px; padding:12px; border:1px solid var(--border); border-radius:10px; }
+.adjustment-totals span { font-size:12px; color:var(--foreground-muted); }
+.adjustment-table { min-width:920px; }
+.adjustment-table small, .adjustment-table strong { display:block; margin-top:5px; }
+.adjustment-history { margin-top:20px; }
+.adjustment-history > div { display:flex; justify-content:space-between; gap:12px; }
+.settings-section { margin-top:24px; padding:20px; }
+.settings-section h2 { font-size:17px; margin:0 0 10px; }
+.settings-section p { color:var(--foreground-muted); line-height:1.55; }
+.settings-section .form-grid { margin:16px 0; }
+.reset-confirm { display:flex; gap:10px; margin-top:20px; line-height:1.5; }
+@media(max-width:650px) { .adjustment-totals { grid-template-columns:repeat(2,minmax(0,1fr)); } }

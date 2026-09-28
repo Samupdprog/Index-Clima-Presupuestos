@@ -44,6 +44,7 @@ import type {
 } from "../../../lib/api/types";
 import { formatMoney, formatNumber } from "../../../lib/format";
 import styles from "./concept-workspace.module.css";
+import { useLinePreview } from "./use-line-preview";
 
 type Execute = (command: QuoteCommand, successMessage?: string) => Promise<QuoteRecord>;
 type ComposerType = "material" | "labor" | "travel" | "other";
@@ -362,7 +363,8 @@ function MaterialComposer({
       .slice(0, 8);
   }, [description, materials]);
 
-  const preview = previewSimple(quantity, cost, saleUnit, igic);
+  const command = simpleCommand(quote.revision, "material", description, quantity, unit, cost, saleUnit, igic, catalogId);
+  const preview = useEconomicPreview(quote.id, command);
 
   function chooseMaterial(item: MaterialRecord) {
     setCatalogId(item.id);
@@ -379,32 +381,7 @@ function MaterialComposer({
     if (readOnly || !description.trim()) return;
     setBusy(true);
     try {
-      const before = new Set(quote.lines.map((line) => line.id));
-      let current = await execute(
-        {
-          type: "addMaterialLine",
-          expectedRevision: quote.revision,
-          description: description.trim(),
-          ...(catalogId ? { catalogMaterialId: catalogId } : {}),
-          saleRule: "unit_price",
-          saleRuleValue: decimalOrZero(saleUnit),
-          quantity: decimalOr(quantity, "1"),
-          igicRate: decimalOr(igic, "7"),
-          ...(cost.trim() ? { directUnitCost: decimalOrZero(cost) } : {}),
-          ...(saleUnit.trim() ? { baseUnitPrice: decimalOrZero(saleUnit) } : {}),
-        },
-        "Material añadido",
-      );
-      const created = findCreatedLine(before, current, "material");
-      if (created && (unit !== created.unit || description.trim() !== created.description)) {
-        current = await execute({
-          type: "updateQuoteLine",
-          expectedRevision: current.revision,
-          lineId: created.id,
-          changes: { unit: unit.trim() || "ud", description: description.trim() },
-        });
-      }
-      void current;
+      await execute(command, "Material añadido");
       setCatalogId("");
       setDescription("");
       setQuantity("1");
@@ -522,7 +499,8 @@ function TravelComposer({
   const [saleUnit, setSaleUnit] = useState("");
   const [igic, setIgic] = useState("7");
   const [busy, setBusy] = useState(false);
-  const preview = previewSimple(quantity, cost, saleUnit, igic);
+  const command = simpleCommand(quote.revision, "travel", description, quantity, unit, cost, saleUnit, igic);
+  const preview = useEconomicPreview(quote.id, command);
 
   function choosePreset(value: string) {
     setPresetId(value);
@@ -541,33 +519,7 @@ function TravelComposer({
     if (readOnly || !description.trim()) return;
     setBusy(true);
     try {
-      const before = new Set(quote.lines.map((line) => line.id));
-      let current = await execute(
-        {
-          type: "addTravelLine",
-          expectedRevision: quote.revision,
-          description: description.trim(),
-          saleRule: "unit_price",
-          saleRuleValue: decimalOrZero(saleUnit),
-          quantity: decimalOr(quantity, "1"),
-          igicRate: decimalOr(igic, "7"),
-        },
-        "Desplazamiento añadido",
-      );
-      const created = findCreatedLine(before, current, "travel");
-      if (created) {
-        current = await execute({
-          type: "updateQuoteLine",
-          expectedRevision: current.revision,
-          lineId: created.id,
-          changes: {
-            unit: unit.trim() || "ud",
-            directUnitCost: decimalOrZero(cost),
-            ...(presetId ? { internalReference: `travel:${presetId}` } : {}),
-          },
-        });
-      }
-      void current;
+      await execute(command, "Desplazamiento añadido");
       setPresetId("");
       setDescription("");
       setQuantity("1");
@@ -627,36 +579,15 @@ function OtherComposer({
   const [saleUnit, setSaleUnit] = useState("");
   const [igic, setIgic] = useState("7");
   const [busy, setBusy] = useState(false);
-  const preview = previewSimple(quantity, cost, saleUnit, igic);
+  const command = simpleCommand(quote.revision, "other", description, quantity, unit, cost, saleUnit, igic);
+  const preview = useEconomicPreview(quote.id, command);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (readOnly || !description.trim()) return;
     setBusy(true);
     try {
-      const before = new Set(quote.lines.map((line) => line.id));
-      let current = await execute(
-        {
-          type: "addOtherLine",
-          expectedRevision: quote.revision,
-          description: description.trim(),
-          saleRule: "unit_price",
-          saleRuleValue: decimalOrZero(saleUnit),
-          quantity: decimalOr(quantity, "1"),
-          igicRate: decimalOr(igic, "7"),
-        },
-        "Concepto añadido",
-      );
-      const created = findCreatedLine(before, current, "other");
-      if (created) {
-        current = await execute({
-          type: "updateQuoteLine",
-          expectedRevision: current.revision,
-          lineId: created.id,
-          changes: { unit: unit.trim() || "ud", directUnitCost: decimalOrZero(cost) },
-        });
-      }
-      void current;
+      await execute(command, "Concepto añadido");
       setDescription("");
       setQuantity("1");
       setUnit("ud");
@@ -705,7 +636,8 @@ function LaborComposer({
   const [igic, setIgic] = useState("7");
   const [rows, setRows] = useState<LaborDraft[]>([emptyLaborDraft()]);
   const [busy, setBusy] = useState(false);
-  const preview = previewLabor(rows, igic);
+  const command = laborCommand(quote.revision, description, igic, rows);
+  const preview = useEconomicPreview(quote.id, command);
 
   function updateEmployee(index: number, employeeId: string) {
     const employee = employees.find((item) => item.id === employeeId);
@@ -728,37 +660,7 @@ function LaborComposer({
     if (readOnly || !description.trim() || !validRows.length) return;
     setBusy(true);
     try {
-      const before = new Set(quote.lines.map((line) => line.id));
-      let current = await execute(
-        {
-          type: "addLaborLine",
-          expectedRevision: quote.revision,
-          description: description.trim(),
-          saleRule: "fixed_line_total",
-          saleRuleValue: "0",
-          quantity: "1",
-          igicRate: decimalOr(igic, "7"),
-        },
-      );
-      const created = findCreatedLine(before, current, "labor");
-      if (!created) throw new Error("created_labor_line_not_found");
-      for (const row of validRows) {
-        current = await execute({
-          type: "addLaborEntry",
-          expectedRevision: current.revision,
-          quoteLineId: created.id,
-          employeeNameSnapshot: row.employeeName || "Empleado",
-          hours: decimalOr(row.hours, "1"),
-          costRateSnapshot: decimalOrZero(row.costRate),
-          saleRateSnapshot: decimalOrZero(row.saleRate),
-        });
-      }
-      await execute({
-        type: "updateQuoteLine",
-        expectedRevision: current.revision,
-        lineId: created.id,
-        changes: { unit: "h" },
-      }, "Mano de obra añadida");
+      await execute(command, "Mano de obra añadida");
       setRows([emptyLaborDraft()]);
       setDescription("Mano de obra instalación");
       setIgic("7");
@@ -849,13 +751,12 @@ function ConceptLineRow({
 }) {
   const dragControls = useDragControls();
   const quantity = line.type === "labor" ? laborHours(line) : num(line.quantity);
-  const quantityDivisor = quantity || 1;
-  const costTotal = num(calculation?.cost);
-  const costUnit = line.type === "labor" ? null : costTotal / quantityDivisor;
-  const saleTotal = num(calculation?.sale);
-  const saleUnit = line.type === "labor" ? null : saleTotal / quantityDivisor;
-  const saleGross = num(calculation?.finalSaleWithTax);
-  const profit = num(calculation?.profit);
+  const costTotal = calculation?.cost;
+  const costUnit = calculation?.costUnit;
+  const saleTotal = calculation?.sale;
+  const saleUnit = calculation?.saleUnit;
+  const saleGross = calculation?.finalSaleWithTax;
+  const profit = calculation?.profit;
 
   async function commitInline(field: InlineField, value: string) {
     const clean = normalizeDecimal(value);
@@ -870,13 +771,6 @@ function ConceptLineRow({
     }
     if (field === "costUnit") {
       if (line.type !== "labor") await onCommit({ directUnitCost: clean }, "Coste actualizado");
-      return;
-    }
-    if (field === "costTotal") {
-      if (line.type !== "labor") {
-        const perUnit = quantityDivisor ? num(clean) / quantityDivisor : num(clean);
-        await onCommit({ directUnitCost: decimalString(perUnit) }, "Coste actualizado");
-      }
       return;
     }
     if (field === "saleUnit") {
@@ -947,19 +841,12 @@ function ConceptLineRow({
 
         <div className={styles.valueCell}>
           <span>Coste</span>
-          <InlineEditor
-            disabled={readOnly || line.type === "labor"}
-            type="number"
-            value={decimalString(costTotal)}
-            display={<strong>{formatMoney(costTotal)}</strong>}
-            ariaLabel="Coste total"
-            onSave={(value) => commitInline("costTotal", value)}
-          />
+          <strong>{formatMoney(costTotal)}</strong>
           {line.type !== "labor" ? (
             <InlineEditor
               disabled={readOnly}
               type="number"
-              value={decimalString(costUnit ?? 0)}
+              value={costUnit ?? ""}
               display={<small>{formatMoney(costUnit)} / {line.unit || "ud"}</small>}
               ariaLabel="Coste por unidad"
               onSave={(value) => commitInline("costUnit", value)}
@@ -973,7 +860,7 @@ function ConceptLineRow({
           <InlineEditor
             disabled={readOnly || line.type === "labor"}
             type="number"
-            value={decimalString(saleTotal)}
+            value={saleTotal ?? ""}
             display={<strong>{formatMoney(saleTotal)} <em>sin IGIC</em></strong>}
             ariaLabel="Precio cliente total sin IGIC"
             onSave={(value) => commitInline("saleTotal", value)}
@@ -983,7 +870,7 @@ function ConceptLineRow({
               <InlineEditor
                 disabled={readOnly}
                 type="number"
-                value={decimalString(saleUnit ?? 0)}
+                value={saleUnit ?? ""}
                 display={<small>{formatMoney(saleUnit)} / {line.unit || "ud"}</small>}
                 ariaLabel="Precio cliente por unidad sin IGIC"
                 onSave={(value) => commitInline("saleUnit", value)}
@@ -1008,7 +895,7 @@ function ConceptLineRow({
 
         <div className={styles.valueCell}>
           <span>Beneficio</span>
-          <strong className={profit < 0 ? styles.negative : styles.positive}>{formatMoney(profit)}</strong>
+          <strong className={String(profit ?? "").startsWith("-") ? styles.negative : styles.positive}>{formatMoney(profit)}</strong>
         </div>
 
         <button className={styles.editButton} type="button" disabled={readOnly} onClick={onEdit}>
@@ -1240,13 +1127,18 @@ function AdvancedLineSheet({
     setError("");
   }, [line, open]);
 
+  const discountValues = parseDiscounts(discountTextValue);
+  const command: Extract<QuoteCommand, { type: "updateQuoteLineDetails" }> | null = line && open && form.description.trim() ? {
+    type: "updateQuoteLineDetails", expectedRevision: quote.revision, lineId: line.id,
+    line: { description: form.description.trim(), unit: form.unit.trim() || "ud", quantity: decimalOr(form.quantity, "1"), igicRate: decimalOr(form.igicRate, "7"),
+      saleRule: form.saleRule, saleRuleValue: decimalOrZero(form.saleRuleValue), saleBaseMode: form.useSupplierListBase ? "supplier_list_price" : "net_cost",
+      directUnitCost: form.directUnitCost.trim() ? decimalOrZero(form.directUnitCost) : null, supplierUnitPrice: form.supplierUnitPrice.trim() ? decimalOrZero(form.supplierUnitPrice) : null,
+      supplierNameSnapshot: form.supplierName || null, supplierCodeSnapshot: form.supplierCode || null, internalReference: form.internalReference || null, internalNotes: form.internalNotes || null },
+    discounts: discountValues.map((percentage) => ({ percentage })), laborEntries: laborEntries(laborRows),
+  } : null;
+  const localPreview = useEconomicPreview(quote.id, open ? command : null);
   if (!line) return <Sheet open={false}><></></Sheet>;
   const activeLine = line;
-
-  const discountValues = parseDiscounts(discountTextValue);
-  const localPreview = activeLine.type === "labor"
-    ? previewLabor(laborRows, form.igicRate)
-    : previewAdvanced(form, discountValues);
 
   function set(key: keyof AdvancedForm, value: string | boolean) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -1273,52 +1165,8 @@ function AdvancedLineSheet({
     setBusy(true);
     setError("");
     try {
-      let current = quote;
-      const lineChanges: Record<string, unknown> = {
-        description: form.description.trim() || activeLine.description,
-        igicRate: decimalOr(form.igicRate, "7"),
-        internalReference: form.internalReference.trim() || null,
-        internalNotes: form.internalNotes.trim() || null,
-      };
-
-      if (activeLine.type !== "labor") {
-        const quantity = decimalOr(form.quantity, "1");
-        const directCost = decimalOrZero(form.directUnitCost);
-        const supplierPrice = form.supplierUnitPrice.trim() ? decimalOrZero(form.supplierUnitPrice) : null;
-        const baseUnitPrice = form.saleRule === "add_percentage" || form.saleRule === "add_euros_per_unit"
-          ? (form.useSupplierListBase && supplierPrice ? supplierPrice : directCost)
-          : form.baseUnitPrice.trim() ? decimalOrZero(form.baseUnitPrice) : null;
-
-        Object.assign(lineChanges, {
-          quantity,
-          unit: form.unit.trim() || "ud",
-          supplierNameSnapshot: form.supplierName.trim() || null,
-          supplierCodeSnapshot: form.supplierCode.trim() || null,
-          supplierUnitPrice: supplierPrice,
-          directUnitCost: directCost,
-          saleRule: form.saleRule,
-          saleRuleValue: decimalOrZero(form.saleRuleValue),
-          baseUnitPrice,
-          saleBaseMode: form.useSupplierListBase ? "supplier_list_price" : "net_cost",
-        });
-      }
-
-      current = await execute({
-        type: "updateQuoteLine",
-        expectedRevision: current.revision,
-        lineId: activeLine.id,
-        changes: lineChanges,
-      });
-
-      if (activeLine.type === "material") {
-        current = await syncDiscounts(activeLine, discountValues, current, execute);
-      }
-
-      if (activeLine.type === "labor") {
-        current = await syncLaborEntries(activeLine, laborRows, current, execute);
-      }
-
-      void current;
+      if (!command) return;
+      await execute(command, "Línea actualizada");
       onOpenChange(false);
     } catch {
       setError("No se pudieron guardar todos los cambios. Revisa los datos y vuelve a intentarlo.");
@@ -1416,7 +1264,7 @@ function AdvancedLineSheet({
                       <span>Puede ser uno o varios descuentos consecutivos.</span>
                     </div>
                     <input value={discountTextValue} disabled={readOnly} onChange={(event) => setDiscountTextValue(event.target.value)} placeholder="Ej. 40, 10, 5" />
-                    <small>Descuento efectivo: {formatDiscount(effectiveDiscount(discountValues))}{discountValues.length ? ` · Descuentos: ${discountValues.map((value) => `${formatNumber(value)} %`).join(" + ")}` : ""}</small>
+                    <small>Descuento efectivo: {formatDiscount(localPreview.effectiveDiscount)}{discountValues.length ? ` · Descuentos: ${discountValues.map((value) => `${formatNumber(value)} %`).join(" + ")}` : ""}</small>
                   </div>
                 ) : null}
               </EditorSection>
@@ -1437,12 +1285,12 @@ function AdvancedLineSheet({
 
                 {activeLine.type === "material" && autoRule ? (
                   <label className={styles.switchRow}>
-                    <input type="checkbox" checked={form.useSupplierListBase} disabled={readOnly || !form.supplierUnitPrice.trim()} onChange={(event) => set("useSupplierListBase", event.target.checked)} />
+                    <input type="checkbox" checked={form.useSupplierListBase} disabled={readOnly} onChange={(event) => set("useSupplierListBase", event.target.checked)} />
                     <span className={styles.switchUi} aria-hidden="true" />
                     <span>
                       <strong>Sumar descuento proveedor al precio cliente</strong>
                       <small>Si lo activas, el precio automático parte del PVP del proveedor. Si lo desactivas, parte del coste neto.</small>
-                      <em>Base actual: {form.useSupplierListBase ? `PVP proveedor · ${formatMoney(form.supplierUnitPrice)}` : `Coste neto · ${formatMoney(form.directUnitCost)}`}</em>
+                      <em>Base calculada: {formatMoney(localPreview.saleBase)}</em>
                     </span>
                   </label>
                 ) : null}
@@ -1471,6 +1319,7 @@ function AdvancedLineSheet({
 
           {error ? <p className={styles.error} role="alert">{error}</p> : null}
 
+          {localPreview.pending ? <p role="status">Calculando en el servidor…</p> : localPreview.error ? <p role="alert" className={styles.error}>{localPreview.error}</p> : null}
           <div className={styles.serverResult}>
             <span>Resultado confirmado actualmente por el servidor</span>
             <strong>{formatMoney(calculation?.sale)} sin IGIC · {formatMoney(calculation?.finalSaleWithTax)} con IGIC</strong>
@@ -1536,70 +1385,6 @@ function formFromLine(line: QuoteLine): AdvancedForm {
   };
 }
 
-async function syncDiscounts(line: QuoteLine, nextValues: string[], quote: QuoteRecord, execute: Execute) {
-  let current = quote;
-  const existing = line.discounts;
-  const shared = Math.min(existing.length, nextValues.length);
-
-  for (let index = 0; index < shared; index += 1) {
-    const oldValue = normalizeDecimal(existing[index]!.percentage);
-    const nextValue = normalizeDecimal(nextValues[index]);
-    if (oldValue !== nextValue) {
-      current = await execute({ type: "updateSupplierDiscount", expectedRevision: current.revision, discountId: existing[index]!.id, percentage: nextValue });
-    }
-  }
-
-  for (let index = existing.length - 1; index >= nextValues.length; index -= 1) {
-    current = await execute({ type: "removeSupplierDiscount", expectedRevision: current.revision, discountId: existing[index]!.id });
-  }
-
-  for (let index = existing.length; index < nextValues.length; index += 1) {
-    current = await execute({ type: "addSupplierDiscount", expectedRevision: current.revision, quoteLineId: line.id, percentage: normalizeDecimal(nextValues[index]) });
-  }
-
-  return current;
-}
-
-async function syncLaborEntries(line: QuoteLine, drafts: LaborDraft[], quote: QuoteRecord, execute: Execute) {
-  let current = quote;
-  const draftIds = new Set(drafts.flatMap((row) => row.id ? [row.id] : []));
-
-  for (const entry of line.laborEntries) {
-    if (!draftIds.has(entry.id)) {
-      current = await execute({ type: "removeLaborEntry", expectedRevision: current.revision, entryId: entry.id });
-    }
-  }
-
-  for (const draft of drafts) {
-    if (!draft.employeeId || num(draft.hours) <= 0) continue;
-    if (draft.id) {
-      const original = line.laborEntries.find((entry) => entry.id === draft.id);
-      if (!original) continue;
-      const changes: Record<string, unknown> = {};
-      if ((original.employeeId ?? "") !== draft.employeeId) changes.employeeId = draft.employeeId;
-      if (original.employeeNameSnapshot !== draft.employeeName) changes.employeeNameSnapshot = draft.employeeName;
-      if (normalizeDecimal(original.hours) !== normalizeDecimal(draft.hours)) changes.hours = decimalOr(draft.hours, "1");
-      if (normalizeDecimal(original.costRateSnapshot) !== normalizeDecimal(draft.costRate)) changes.costRateSnapshot = decimalOrZero(draft.costRate);
-      if (normalizeDecimal(original.saleRateSnapshot) !== normalizeDecimal(draft.saleRate)) changes.saleRateSnapshot = decimalOrZero(draft.saleRate);
-      if (Object.keys(changes).length) {
-        current = await execute({ type: "updateLaborEntry", expectedRevision: current.revision, entryId: draft.id, changes });
-      }
-    } else {
-      current = await execute({
-        type: "addLaborEntry",
-        expectedRevision: current.revision,
-        quoteLineId: line.id,
-        employeeNameSnapshot: draft.employeeName || "Empleado",
-        hours: decimalOr(draft.hours, "1"),
-        costRateSnapshot: decimalOrZero(draft.costRate),
-        saleRateSnapshot: decimalOrZero(draft.saleRate),
-      });
-    }
-  }
-
-  return current;
-}
-
 function QuickTextField({ label, value, onChange, readOnly, className = "", placeholder }: { label: string; value: string; onChange: (value: string) => void; readOnly: boolean; className?: string | undefined; placeholder?: string | undefined }) {
   return <div className={`${styles.quickField} ${className}`}><label>{label}</label><input value={value} disabled={readOnly} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} /></div>;
 }
@@ -1612,7 +1397,7 @@ function QuickMoneyField({ label, hint, value, onChange, readOnly, className = "
   return <div className={`${styles.quickField} ${className}`}><label>{label}{hint ? <small>{hint}</small> : null}</label><input value={value} disabled={readOnly} inputMode="decimal" placeholder="0,00" onChange={(event) => onChange(event.target.value)} /></div>;
 }
 
-function QuickOutput({ label, value, className = "" }: { label: string; value: number; className?: string | undefined }) {
+function QuickOutput({ label, value, className = "" }: { label: string; value: string | number | undefined; className?: string | undefined }) {
   return <div className={`${styles.quickField} ${styles.outputField} ${className}`}><label>{label}</label><output>{formatMoney(value)}</output></div>;
 }
 
@@ -1627,18 +1412,18 @@ function QuickTotals({ preview }: { preview: SimplePreview }) {
   );
 }
 
-function PreviewMetric({ label, value, profit = false, plain = false, suffix = "" }: { label: string; value: number; profit?: boolean; plain?: boolean; suffix?: string }) {
-  return <div className={`${styles.previewMetric}${profit ? ` ${styles.previewProfit}` : ""}${profit && value < 0 ? ` ${styles.previewNegative}` : ""}`}><span>{label}</span><strong>{plain ? `${formatNumber(value)}${suffix}` : formatMoney(value)}</strong></div>;
+function PreviewMetric({ label, value, profit = false, plain = false, suffix = "" }: { label: string; value: string | number | undefined; profit?: boolean; plain?: boolean; suffix?: string }) {
+  return <div className={`${styles.previewMetric}${profit ? ` ${styles.previewProfit}` : ""}${profit && String(value ?? "").startsWith("-") ? ` ${styles.previewNegative}` : ""}`}><span>{label}</span><strong>{plain ? `${formatNumber(value)}${suffix}` : formatMoney(value)}</strong></div>;
 }
 
 function EconomicStrip({ quote, onReviewPrice }: { quote: QuoteRecord; onReviewPrice: () => void }) {
   const calculation = quote.calculation;
   return (
     <section className={styles.economicStrip} aria-label="Resumen económico">
-      <PreviewMetric label="Coste total" value={num(calculation?.cost)} />
-      <PreviewMetric label="Precio cliente · sin IGIC" value={num(calculation?.saleWithoutTax)} />
-      <PreviewMetric label="Precio cliente · con IGIC" value={num(calculation?.saleWithTax)} />
-      <PreviewMetric label="Beneficio estimado" value={num(calculation?.profit)} profit />
+      <PreviewMetric label="Coste total" value={calculation?.cost} />
+      <PreviewMetric label="Precio cliente · sin IGIC" value={calculation?.saleWithoutTax} />
+      <PreviewMetric label="Precio cliente · con IGIC" value={calculation?.saleWithTax} />
+      <PreviewMetric label="Beneficio estimado" value={calculation?.profit} profit />
       <div className={styles.stripAction}>
         <span>Cuando estén todas las líneas, comprueba el precio final.</span>
         <RippleButton onClick={onReviewPrice} disabled={!quote.lines.length}>Revisar precio final</RippleButton>
@@ -1652,50 +1437,39 @@ function Field({ label, children, className = "" }: { label: string; children: R
 }
 
 function EditorSection({ title, description, action, children }: { title: string; description?: string; action?: ReactNode; children: ReactNode }) {
-  return (
-    <section className={styles.editorSection}>
-      <div className={styles.editorSectionHead}><div><h3>{title}</h3>{description ? <p>{description}</p> : null}</div>{action}</div>
-      {children}
-    </section>
-  );
+  const [expanded, setExpanded] = useState(true);
+  return <section className={styles.editorSection}>
+    <div className={styles.editorSectionHead}>
+      <button type="button" className="editor-section-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}><span><strong>{title}</strong>{description ? <small>{description}</small> : null}</span><ChevronDown data-open={expanded || undefined} /></button>
+      {action}
+    </div>
+    <div hidden={!expanded}>{children}</div>
+  </section>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
   return <div><span>{label}</span><strong>{value}</strong></div>;
 }
 
-type SimplePreview = { costTotal: number; saleNet: number; saleGross: number; profit: number; saleUnitGross: number };
+type SimplePreview = { costTotal: string | undefined; saleNet: string | undefined; saleGross: string | undefined; profit: string | undefined; saleUnitGross: string | undefined; effectiveDiscount?: string; saleBase?: string | null; error?: string | undefined; pending: boolean };
 
-function previewSimple(quantity: string, costUnit: string, saleUnit: string, igic: string): SimplePreview {
-  const qty = num(quantity);
-  const cost = qty * num(costUnit);
-  const net = qty * num(saleUnit);
-  const gross = net * (1 + num(igic) / 100);
-  return { costTotal: cost, saleNet: net, saleGross: gross, profit: net - cost, saleUnitGross: num(saleUnit) * (1 + num(igic) / 100) };
+function simpleCommand(revision: number, type: ComposerType, description: string, quantity: string, unit: string, cost: string, price: string, igic: string, catalogId?: string): Extract<QuoteCommand, { type: "createQuoteLine" }> {
+  return { type: "createQuoteLine", expectedRevision: revision, lineType: type,
+    ...(catalogId ? { catalogMaterialId: catalogId } : {}),
+    line: { description: description.trim(), unit: unit.trim() || "ud", quantity: decimalOr(quantity, "1"), igicRate: decimalOr(igic, "7"),
+      saleRule: price.trim() ? "unit_price" : "add_percentage", saleRuleValue: decimalOrZero(price), saleBaseMode: "net_cost", directUnitCost: decimalOrZero(cost) }, discounts: [], laborEntries: [] };
 }
-
-function previewAdvanced(form: AdvancedForm, discounts: string[]): SimplePreview {
-  const qty = num(form.quantity);
-  const supplierPvp = num(form.supplierUnitPrice);
-  const discountedSupplier = discounts.reduce((current, discount) => current * (1 - num(discount) / 100), supplierPvp);
-  const costUnit = form.directUnitCost.trim() ? num(form.directUnitCost) : discountedSupplier;
-  const costTotal = qty * costUnit;
-  const value = num(form.saleRuleValue);
-  const base = form.useSupplierListBase && supplierPvp > 0 ? supplierPvp : costUnit;
-  let saleNet = 0;
-  if (form.saleRule === "unit_price") saleNet = qty * value;
-  else if (form.saleRule === "fixed_line_total") saleNet = value;
-  else if (form.saleRule === "add_euros_per_unit") saleNet = qty * (base + value);
-  else saleNet = qty * base * (1 + value / 100);
-  const saleGross = saleNet * (1 + num(form.igicRate) / 100);
-  return { costTotal, saleNet, saleGross, profit: saleNet - costTotal, saleUnitGross: qty ? saleGross / qty : 0 };
+function laborEntries(rows: LaborDraft[]) {
+  return rows.filter((row) => row.employeeId || row.employeeName).map((row) => ({ ...(row.id ? { id: row.id } : {}), ...(row.employeeId ? { employeeId: row.employeeId } : {}), employeeNameSnapshot: row.employeeName || "Empleado", hours: decimalOr(row.hours, "1"), costRateSnapshot: decimalOrZero(row.costRate), saleRateSnapshot: decimalOrZero(row.saleRate) }));
 }
-
-function previewLabor(rows: LaborDraft[], igic: string): SimplePreview {
-  const costTotal = rows.reduce((sum, row) => sum + num(row.hours) * num(row.costRate), 0);
-  const saleNet = rows.reduce((sum, row) => sum + num(row.hours) * num(row.saleRate), 0);
-  const saleGross = saleNet * (1 + num(igic) / 100);
-  return { costTotal, saleNet, saleGross, profit: saleNet - costTotal, saleUnitGross: 0 };
+function laborCommand(revision: number, description: string, igic: string, rows: LaborDraft[]): Extract<QuoteCommand, { type: "createQuoteLine" }> {
+  return { type: "createQuoteLine", expectedRevision: revision, lineType: "labor", line: { description: description.trim(), unit: "h", quantity: "1", igicRate: decimalOr(igic, "7"), saleRule: "unit_price", saleRuleValue: "0" }, discounts: [], laborEntries: laborEntries(rows) };
+}
+function useEconomicPreview(quoteId: string, command: QuoteCommand | null): SimplePreview {
+  const validCommand = command && (command.type === "createQuoteLine" || command.type === "updateQuoteLineDetails") && command.line.description.trim() ? command : null;
+  const { result, error, pending } = useLinePreview(quoteId, validCommand);
+  return { costTotal: result?.cost, saleNet: result?.sale, saleGross: result?.finalSaleWithTax, profit: result?.profit, saleUnitGross: result?.saleUnitWithTax,
+    ...(result?.effectiveSupplierDiscount !== undefined ? { effectiveDiscount: result.effectiveSupplierDiscount } : {}), ...(result?.saleBase !== undefined ? { saleBase: result.saleBase } : {}), error, pending };
 }
 
 function emptyLaborDraft(): LaborDraft {
@@ -1748,16 +1522,9 @@ function num(value: string | number | null | undefined) {
   return Number.isFinite(result) ? result : 0;
 }
 
-function decimalString(value: number) {
-  if (!Number.isFinite(value)) return "0";
-  return String(Number(value.toFixed(6)));
-}
-
 function normalizeDecimal(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === "") return "";
-  const normalized = String(value).trim().replace(",", ".");
-  const numeric = Number(normalized);
-  return Number.isFinite(numeric) ? String(numeric) : "";
+  return String(value).trim().replace(",", ".");
 }
 
 function decimalOr(value: string, fallback: string) {
@@ -1773,21 +1540,14 @@ function toInputDecimal(value: string | number | null | undefined) {
 }
 
 function normalizedRate(value: string | null | undefined) {
-  return toInputDecimal(value) || "7";
+  return (toInputDecimal(value) || "7").replace(/\.0+$/, "");
 }
 
 function parseDiscounts(value: string) {
-  return value.split(/[;,]/).map((part) => normalizeDecimal(part)).filter(Boolean);
+  return value.replaceAll("%", "").split(/[+;,]/).map((part) => normalizeDecimal(part)).filter(Boolean);
 }
 
-function effectiveDiscount(discounts: string[]) {
-  const remaining = discounts.reduce((current, discount) => current * (1 - num(discount) / 100), 1);
-  return (1 - remaining) * 100;
-}
-
-function formatDiscount(value: number) {
-  return `${new Intl.NumberFormat("es-ES", { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value)} %`;
-}
+function formatDiscount(value: string | undefined) { return value === undefined ? "—" : `${formatNumber(value)} %`; }
 
 function discountText(discounts: string[]) {
   if (!discounts.length) return "0 %";

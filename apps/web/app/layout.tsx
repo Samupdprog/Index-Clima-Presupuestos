@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { AppShell } from "../components/app-shell";
 import { ThemeProvider } from "../components/theme-provider";
 import "./globals.css";
+import "./closure.css";
 
 export const metadata = {
   title: {

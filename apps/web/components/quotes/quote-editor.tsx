@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { DropdownMenu } from "radix-ui";
+import { AdjustmentDialog } from "./adjustment-dialog";
 import { ReviewDocument } from "./review-document";
 import { ConceptWorkspace } from "./editor/concept-workspace";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -39,6 +40,7 @@ import { SearchableSelect } from "../ui/searchable-select";
 import { api, ApiError } from "../../lib/api/client";
 import type {
   CalculatedLine,
+  ClientRecord,
   EmployeeRecord,
   MaterialRecord,
   QuoteLine,
@@ -169,9 +171,9 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
     } catch (cause) {
       setSaveState("error");
       if (cause instanceof ApiError && cause.isRevisionConflict) setConflict(true);
-      else if (cause instanceof ApiError && cause.code === "holded_not_configured") push("Configura FEATURE_HOLDED y HOLDED_API_KEY en el servidor para importar", "error");
-      else push("Holded no pudo guardar el presupuesto. El estado local no ha cambiado.", "error");
-      throw cause;
+      else if (cause instanceof ApiError && cause.code === "holded_not_configured") push("Conecta Holded desde Configuración para enviar el presupuesto.", "error");
+      else push(`No se pudo confirmar el envío a Holded (${cause instanceof ApiError ? cause.code : "error de conexión"}). Los datos locales están guardados; revisa la conexión y los impuestos antes de reintentar.`, "error");
+      await refreshQuote().catch(() => undefined);
     }
   }
 
@@ -193,40 +195,9 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
 
   async function importAiLines(lines: AiLineDraft[]) {
     if (!quote || readOnly) return;
-    let current = quote;
-    for (const draft of lines) {
-      const previousIds = new Set(current.lines.map((line) => line.id));
-      const common = {
-        expectedRevision: current.revision,
-        description: draft.description,
-        saleRule: "unit_price" as const,
-        saleRuleValue: draft.saleUnitPrice || "0",
-        quantity: draft.quantity || "1",
-        igicRate: draft.igicRate || "7",
-      };
-      if (draft.type === "material") {
-        current = await execute({
-          type: "addMaterialLine",
-          ...common,
-          ...(draft.directUnitCost ? { directUnitCost: draft.directUnitCost } : {}),
-          ...(draft.supplierUnitPrice ? { supplierUnitPrice: draft.supplierUnitPrice } : {}),
-          ...(draft.saleUnitPrice ? { baseUnitPrice: draft.saleUnitPrice } : {}),
-        });
-      } else if (draft.type === "travel") current = await execute({ type: "addTravelLine", ...common });
-      else current = await execute({ type: "addOtherLine", ...common });
-
-      const created = current.lines.find((line) => !previousIds.has(line.id));
-      if (!created) throw new Error("imported_line_not_found");
-      const changes: Record<string, unknown> = { unit: draft.unit || "ud" };
-      if (draft.directUnitCost) changes.directUnitCost = draft.directUnitCost;
-      if (draft.supplierUnitPrice) changes.supplierUnitPrice = draft.supplierUnitPrice;
-      if (draft.supplier) changes.supplierNameSnapshot = draft.supplier;
-      if (draft.supplierCode) changes.supplierCodeSnapshot = draft.supplierCode;
-      if (Object.keys(changes).length) current = await execute({ type: "updateQuoteLine", expectedRevision: current.revision, lineId: created.id, changes });
-      if (draft.type === "material") {
-        for (const percentage of draft.discounts) current = await execute({ type: "addSupplierDiscount", expectedRevision: current.revision, quoteLineId: created.id, percentage });
-      }
-    }
+    await execute({ type: "importQuoteLines", expectedRevision: quote.revision, lines: lines.map(({ id: _id, supplierUnitPrice, directUnitCost, saleUnitPrice, ...line }) => ({ ...line,
+      saleBaseMode: "supplier_list_price", ...(supplierUnitPrice.trim() ? { supplierUnitPrice } : {}), ...(directUnitCost.trim() ? { directUnitCost } : {}), ...(saleUnitPrice.trim() ? { saleUnitPrice } : {}),
+    })) });
     push(`${lines.length} ${lines.length === 1 ? "línea importada" : "líneas importadas"}`);
     setWorkflowStep(3);
   }
@@ -248,7 +219,7 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
       <WorkflowSteps current={workflowStep} quote={quote} onSelect={setWorkflowStep} />
       <AnimatePresence mode="wait" initial={false}>
         <motion.div key={workflowStep} className="workflow-stage" initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduceMotion ? 0 : -5 }} transition={{ duration: reduceMotion ? 0 : .2 }}>
-          {workflowStep === 1 ? <ClientStep quote={quote} onNext={() => setWorkflowStep(2)} /> : null}
+          {workflowStep === 1 ? <ClientStep quote={quote} execute={execute} disabled={readOnly} onNext={() => setWorkflowStep(2)} /> : null}
           {workflowStep === 2 ? <AiImportStep readOnly={readOnly} onImport={importAiLines} onBack={() => setWorkflowStep(1)} onSkip={() => setWorkflowStep(3)} /> : null}
           {workflowStep === 3 ? <>
             <div className="stage-heading">
@@ -315,13 +286,13 @@ Cada elemento debe usar esta estructura:
   "supplier": "Nombre del proveedor",
   "supplierCode": "Referencia",
   "supplierUnitPrice": "100.00",
-  "directUnitCost": "80.00",
-  "saleUnitPrice": "120.00",
+  "directUnitCost": "76.00",
+  "saleUnitPrice": "",
   "igicRate": "7",
   "discounts": ["20", "5"]
 }
 
-Reglas: usa cadenas decimales con punto; conserva los descuentos consecutivos por separado; no inventes importes; usa type "material", "travel" u "other"; si un dato no aparece, déjalo como cadena vacía.`;
+Reglas: extrae únicamente, no calcules precios ni totales. Nunca inventes un precio de venta; saleUnitPrice solo puede contener un precio de venta explícito autorizado, y queda vacío en ofertas de proveedor. Si falta gross o net, déjalo vacío y conserva los descuentos originales; usa cadenas decimales con punto; conserva los descuentos consecutivos por separado; no inventes importes; usa type "material", "travel" u "other"; si un dato no aparece, déjalo como cadena vacía.`;
 
 function WorkflowSteps({ current, quote, onSelect }: { current: WorkflowStep; quote: QuoteRecord; onSelect: (step: WorkflowStep) => void }) {
   const hasLines = quote.lines.length > 0;
@@ -332,10 +303,26 @@ function WorkflowSteps({ current, quote, onSelect }: { current: WorkflowStep; qu
   })}</ol></nav>;
 }
 
-function ClientStep({ quote, onNext }: { quote: QuoteRecord; onNext: () => void }) {
+function ClientStep({ quote, onNext, execute, disabled }: { quote: QuoteRecord; onNext: () => void; execute: Execute; disabled: boolean }) {
   const client = quote.clientSnapshot;
+  const [clients, setClients] = useState<ClientRecord[]>([]);
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    const timer = setTimeout(() => { void api.searchClients(query).then((items) => { if (active) { setClients(items); setError(""); } }).catch(() => { if (active) setError("No se pudieron buscar los clientes."); }); }, 250);
+    return () => { active = false; clearTimeout(timer); };
+  }, [query]);
+  async function select(clientId: string) {
+    if (!clientId) return;
+    setBusy(true);
+    try { await execute({ type: "selectClient", expectedRevision: quote.revision, clientId }, "Cliente actualizado"); } catch { setError("No se pudo cambiar el cliente."); } finally { setBusy(false); }
+  }
   return <section className="guided-card" aria-labelledby="client-step-title"><div className="guided-card-head"><span className="guided-icon"><UserRound /></span><div><p className="eyebrow">Paso 1 de 5</p><h2 id="client-step-title">Confirma el cliente</h2><p>Comprueba que el presupuesto está asociado a la persona o empresa correcta antes de cargar datos.</p></div></div>
-    {client ? <div className="client-confirmation"><div><span>Cliente seleccionado</span><strong>{client.name}</strong><p>{[client.taxId, client.email, client.phone, client.address].filter(Boolean).join(" · ") || "Sin datos de contacto adicionales"}</p></div><CheckCircle2 /></div> : <div className="notice notice-warning"><AlertTriangle /><span><strong>Este presupuesto no tiene cliente.</strong> El contrato actual no permite cambiarlo después de crear el presupuesto. Crea uno nuevo desde el listado para completar el recorrido.</span></div>}
+    {client ? <div className="client-confirmation"><div><span>Cliente seleccionado</span><strong>{client.name}</strong><p>{[client.taxId, client.email, client.phone, client.address].filter(Boolean).join(" · ") || "Sin datos de contacto adicionales"}</p></div><CheckCircle2 /></div> : <p>Selecciona un cliente para poder enviar el presupuesto a Holded.</p>}
+    <label className="field"><span>Seleccionar o cambiar cliente</span><SearchableSelect value={quote.clientId ?? ""} options={clients.map((item) => ({ value: item.id, label: item.name, description: item.taxId ?? item.email ?? "" }))} onQueryChange={setQuery} onChange={(id) => void select(id)} disabled={disabled || busy} allowClear={false} /></label>
+    {error ? <p role="alert">{error}</p> : null}
     <div className="guided-actions"><Link className="button button-secondary" href="/presupuestos"><ArrowLeft />Volver al listado</Link><RippleButton onClick={onNext}>Continuar a preparación<ArrowRight /></RippleButton></div>
   </section>;
 }
@@ -360,7 +347,7 @@ function normalizeAiLines(value: unknown): AiLineDraft[] {
     const rawType = String(get("type", "tipo") ?? "material").toLowerCase();
     const type: AiLineDraft["type"] = rawType === "travel" || rawType === "desplazamiento" ? "travel" : rawType === "other" || rawType === "otro" ? "other" : "material";
     const rawDiscounts = get("discounts", "descuentos");
-    const discountValues = Array.isArray(rawDiscounts) ? rawDiscounts : typeof rawDiscounts === "string" ? rawDiscounts.split(",") : [];
+    const discountValues = Array.isArray(rawDiscounts) ? rawDiscounts : typeof rawDiscounts === "string" ? rawDiscounts.replaceAll("%", "").split(/[+;,]/) : [];
     const igicRate = decimalString(get("igicRate", "igic"), "7");
     if (!["0", "3", "7", "15"].includes(igicRate)) throw new Error(`El IGIC de la línea ${index + 1} debe ser 0, 3, 7 o 15.`);
     return {
@@ -373,7 +360,7 @@ function normalizeAiLines(value: unknown): AiLineDraft[] {
       supplierCode: String(get("supplierCode", "codigoProveedor", "codigo") ?? "").trim(),
       supplierUnitPrice: decimalString(get("supplierUnitPrice", "pvpProveedor")),
       directUnitCost: decimalString(get("directUnitCost", "costeNeto", "cost")),
-      saleUnitPrice: decimalString(get("saleUnitPrice", "precioCliente", "price"), "0"),
+      saleUnitPrice: decimalString(get("saleUnitPrice", "precioCliente", "price")),
       igicRate,
       discounts: discountValues.map((entry) => decimalString(entry)).filter(Boolean),
     };
@@ -411,7 +398,7 @@ function AiImportStep({ readOnly, onImport, onBack, onSkip }: { readOnly: boolea
   async function importLines() {
     setBusy(true); setError("");
     try { await onImport(lines); }
-    catch { setError("La importación se detuvo. Revisa el presupuesto antes de volver a intentarlo para evitar duplicados."); }
+    catch { setError("No se importó ninguna línea. Revisa los datos incompletos o inválidos y vuelve a intentarlo."); }
     finally { setBusy(false); }
   }
 
@@ -546,21 +533,6 @@ function statusLabel(status: QuoteStatus) {
 function SaveIndicator({ state }: { state: SaveState }) {
   if (state === "idle") return null;
   return <span className="save-status">{state === "saving" ? <LoaderCircle className="spin" /> : state === "saved" ? <Check /> : <AlertTriangle />} {state === "saving" ? "Guardando…" : state === "saved" ? "Guardado" : "Error al guardar"}</span>;
-}
-
-function AdjustmentDialog({ open, onOpenChange, quote, execute }: { open: boolean; onOpenChange: (open: boolean) => void; quote: QuoteRecord; execute: Execute }) {
-  const [scope, setScope] = useState<"quote" | "selection">("quote"); const [mode, setMode] = useState<"amount" | "percentage" | "target_total">("amount"); const [value, setValue] = useState(""); const [selected, setSelected] = useState<string[]>([]); const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setValue(""); setSelected([]); } }, [open]);
-  async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); try { await execute({ type: "addPriceAdjustment", expectedRevision: quote.revision, scope, mode, value, ...(scope === "selection" ? { targetLineIds: selected } : {}) }, "Ajuste aplicado"); onOpenChange(false); } finally { setBusy(false); } }
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent title="Ajustar precio" description="El servidor aplicará y repartirá el ajuste de forma auditable." footer={<><DialogClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></DialogClose><RippleButton type="submit" form="adjustment-form" disabled={busy || !value || (scope === "selection" && selected.length === 0)}>{busy ? "Aplicando…" : "Aplicar ajuste"}</RippleButton></>}>
-    <form id="adjustment-form" onSubmit={submit} className="form-grid">
-      <div className="field"><label className="field-label" htmlFor="adjust-scope">Aplicar a</label><select id="adjust-scope" className="select" value={scope} onChange={(event) => setScope(event.target.value as typeof scope)}><option value="quote">Presupuesto completo</option><option value="selection">Selección de líneas</option></select></div>
-      <div className="field"><label className="field-label" htmlFor="adjust-mode">Tipo de ajuste</label><select id="adjust-mode" className="select" value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}><option value="amount">Sumar €</option><option value="percentage">Aumentar %</option><option value="target_total">Fijar total sin IGIC</option></select></div>
-      <div className="field span-2"><label className="field-label" htmlFor="adjust-value">Valor</label><input id="adjust-value" className="input" value={value} onChange={(event) => setValue(event.target.value)} inputMode="decimal" placeholder={mode === "percentage" ? "Ej. 5" : "Ej. 300"} required /></div>
-      {scope === "selection" ? <fieldset className="span-2" style={{ border: 0, padding: 0, margin: 0 }}><legend className="field-label" style={{ marginBottom: 8 }}>Líneas</legend><div style={{ display: "grid", gap: 7 }}>{quote.lines.filter((line) => !["title", "adjustment"].includes(line.type)).map((line) => <label className="panel" key={line.id} style={{ padding: 10, display: "flex", alignItems: "center", gap: 9 }}><input type="checkbox" checked={selected.includes(line.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, line.id] : current.filter((id) => id !== line.id))} />{line.description}</label>)}</div></fieldset> : null}
-      <div className="notice span-2"><CircleDollarSign /><span><strong>Precio actual:</strong> {formatMoney(quote.calculation?.saleWithoutTax)}. El nuevo precio aparecerá después de que el motor del servidor confirme el reparto.</span></div>
-    </form>
-  </DialogContent></Dialog>;
 }
 
 function AddTextDialog({ open, onOpenChange, quote, templates, execute }: { open: boolean; onOpenChange: (open: boolean) => void; quote: QuoteRecord; templates: TextTemplateRecord[]; execute: Execute }) {
