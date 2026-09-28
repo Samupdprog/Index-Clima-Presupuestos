@@ -71,6 +71,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Migraciones + installation (idempotente) antes de aceptar peticiones.
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
@@ -104,6 +107,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4002/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
@@ -162,6 +167,7 @@ services:
       FEATURE_MCP: ${FEATURE_MCP:-false}
       INSTALLATION_ID: ${INSTALLATION_ID}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      MCP_SUBJECT: ${MCP_SUBJECT:-local-ai}
       MCP_SCOPES: ${MCP_SCOPES:-clients:read,clients:write,quotes:read,quotes:write,holded:read,holded:write}
       MCP_REQUIRED_SCOPES: ${MCP_REQUIRED_SCOPES:-}
       AUTH_ISSUER_URL: ${AUTH_ISSUER_URL:-}
