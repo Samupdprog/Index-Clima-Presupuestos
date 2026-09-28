@@ -22,6 +22,18 @@ services:
       - "traefik.http.routers.${INSTANCE_SLUG}-mcp.tls.certresolver=letsencrypt"
       - "traefik.http.services.${INSTANCE_SLUG}-mcp.loadbalancer.server.port=4001"
 
+  oauth:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK}"
+      # Mismo host que el MCP: el Authorization Server atiende solo /oauth/* y su metadata RFC 8414 / OIDC.
+      - "traefik.http.routers.${INSTANCE_SLUG}-oauth.rule=Host(`${MCP_HOST}`) && (PathPrefix(`/oauth/`) || Path(`/.well-known/oauth-authorization-server`) || Path(`/.well-known/openid-configuration`))"
+      - "traefik.http.routers.${INSTANCE_SLUG}-oauth.priority=100"
+      - "traefik.http.routers.${INSTANCE_SLUG}-oauth.entrypoints=websecure"
+      - "traefik.http.routers.${INSTANCE_SLUG}-oauth.tls=true"
+      - "traefik.http.routers.${INSTANCE_SLUG}-oauth.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${INSTANCE_SLUG}-oauth.loadbalancer.server.port=4003"
+
 networks:
   public:
     name: ${TRAEFIK_NETWORK}

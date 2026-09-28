@@ -20,6 +20,7 @@
     "dev:local:web": "node scripts/dev-local.mjs web",
     "dev:local:mcp": "node scripts/dev-local.mjs mcp",
     "dev:local:worker": "node scripts/dev-local.mjs worker",
+    "dev:local:oauth": "node scripts/dev-local.mjs oauth",
     "infra:up": "docker compose up -d postgres",
     "infra:down": "docker compose down",
     "db:generate": "npm run db:generate --workspace @quotes/db",

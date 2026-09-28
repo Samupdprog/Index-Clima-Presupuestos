@@ -166,16 +166,18 @@ services:
       PORT: "4001"
       MCP_HOST: ${MCP_HOST}
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:4001/mcp}
-      MCP_AUTH_MODE: ${MCP_AUTH_MODE:-disabled}
       FEATURE_MCP: ${FEATURE_MCP:-false}
       INSTALLATION_ID: ${INSTALLATION_ID}
+      # bearer (token estático) | oauth (ChatGPT/Claude) | hybrid (ambos, diagnóstico)
+      MCP_AUTH_MODE: ${MCP_AUTH_MODE:-bearer}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
       MCP_SUBJECT: ${MCP_SUBJECT:-local-ai}
       MCP_SCOPES: ${MCP_SCOPES:-clients:read,clients:write,quotes:read,quotes:write,holded:read,holded:write}
-      MCP_REQUIRED_SCOPES: ${MCP_REQUIRED_SCOPES:-}
+      # Issuer público del Authorization Server; por defecto el origen de MCP_PUBLIC_URL (AS integrado).
       AUTH_ISSUER_URL: ${AUTH_ISSUER_URL:-}
-      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
-      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
+      # JWKS leído por la red interna (servicio oauth) o el del IdP externo.
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-http://oauth:4003/oauth/jwks}
+      AUTH_ALLOWED_SUBJECTS: ${AUTH_ALLOWED_SUBJECTS:-}
       INTERNAL_API_URL: http://api:4000
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
     ports:
@@ -188,6 +190,52 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  oauth:
+    # Authorization Server OAuth 2.1 integrado (ChatGPT/Claude). Perfil explícito: COMPOSE_PROFILES=mcp,oauth.
+    profiles: ["oauth"]
+    build:
+      context: .
+      dockerfile: infra/docker/oauth.Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      TZ: ${TZ:-UTC}
+      HOST: 0.0.0.0
+      PORT: "4003"
+      DATABASE_URL: ${DATABASE_URL}
+      INSTALLATION_ID: ${INSTALLATION_ID}
+      INSTALLATION_NAME: ${INSTALLATION_NAME:-Index Clima}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:4001/mcp}
+      MCP_SCOPES: ${MCP_SCOPES:-clients:read,clients:write,quotes:read,quotes:write,holded:read,holded:write}
+      AUTH_ISSUER_URL: ${AUTH_ISSUER_URL:-}
+      AUTH_SIGNING_KEY: ${AUTH_SIGNING_KEY:-}
+      AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET:-}
+      AUTH_OWNER_USERNAME: ${AUTH_OWNER_USERNAME:-index-clima}
+      AUTH_OWNER_PASSWORD: ${AUTH_OWNER_PASSWORD:-}
+      AUTH_CIMD_ALLOWED_HOSTS: ${AUTH_CIMD_ALLOWED_HOSTS:-chatgpt.com,claude.ai,claude.com}
+      AUTH_EXTRA_REDIRECT_URIS: ${AUTH_EXTRA_REDIRECT_URIS:-}
+    ports:
+      - "127.0.0.1:${OAUTH_PORT:-4003}:4003"
+    networks:
+      - private
+      - public
+      # CIMD: descarga los metadatos de cliente de chatgpt.com / claude.ai.
+      - egress
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4003/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5

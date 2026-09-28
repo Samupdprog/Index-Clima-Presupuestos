@@ -46,6 +46,9 @@ uuid() {
 }
 
 POSTGRES_PASSWORD="$(secret)"
+# Clave de firma del Authorization Server integrado: EC P-256, PKCS#8 PEM en base64 (una línea).
+AUTH_SIGNING_KEY="$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null | openssl base64 -A)"
+[ -n "$AUTH_SIGNING_KEY" ] || { echo "ERROR: no se pudo generar AUTH_SIGNING_KEY con openssl."; exit 1; }
 declare -A VALUES=(
   [INSTANCE_SLUG]="$SLUG"
   [INSTALLATION_ID]="$(uuid)"
@@ -60,6 +63,9 @@ declare -A VALUES=(
   [INTERNAL_SERVICE_TOKEN]="$(secret)"
   [HOLDED_ENCRYPTION_KEY]="$(secret)"
   [MCP_AUTH_TOKEN]="$(secret)"
+  [AUTH_SIGNING_KEY]="$AUTH_SIGNING_KEY"
+  [AUTH_COOKIE_SECRET]="$(secret)"
+  [AUTH_OWNER_PASSWORD]="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-28)"
 )
 
 umask 077
@@ -75,4 +81,4 @@ done < "$ROOT/.env.example" > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 echo "Creado $ENV_FILE con permisos 600 (INSTALLATION_ID y secretos generados)."
 echo "Los secretos no se muestran. Consulta los que necesites con, por ejemplo:"
-echo "  grep -E '^(APP_ACCESS_PASSWORD|MCP_AUTH_TOKEN)=' .env"
+echo "  grep -E '^(APP_ACCESS_PASSWORD|AUTH_OWNER_PASSWORD)=' .env"
