@@ -12,6 +12,8 @@ export function addQuoteText(repository: QuoteWorkflowRepository) { return (inpu
 export async function executeQuoteCommand(repository: QuoteWorkflowRepository, command: Record<string, unknown>) {
 	const input = { ...command, installationId: command.installationId, quoteId: command.quoteId };
 	switch (command.type) {
+		case "importQuoteLines": return repository.importQuoteLines(input);
+		case "recalculateQuote": return repository.recalculateQuote(input);
 		case "createQuoteLine": return repository.createLineWithDetails(input);
 		case "updateQuoteLineDetails": return repository.updateLineDetails(input);
 		case "updateQuoteLine": return repository.updateLine(input);

@@ -70,15 +70,18 @@ export async function upsertHoldedContact(
   installationId: string,
   contact: HoldedClientContact,
 ): Promise<ClientRecord | null> {
-  if (!contact.isClient) return null;
   const payloadHash = hashHoldedSnapshot(contact.snapshot);
-
   const linked = await clients.findByHoldedContactId(installationId, contact.id);
   if (linked) {
+    if (linked.deletedAt) return null;
+    if (!contact.isClient) return clients.archive({ installationId, id: linked.id, expectedRevision: linked.revision, source: "holded" });
+    // A failed/pending outbound change is never overwritten by a search or reconciliation.
+    if (linked.syncStatus === "pending" || linked.syncStatus === "error" || linked.syncStatus === "conflict") return linked;
     // Sin cambios remotos → no reescribimos (evita churn en cada búsqueda).
     if (linked.holdedPayloadHash && linked.holdedPayloadHash === payloadHash) return linked;
-    return applySnapshot(clients, installationId, linked.id, contact, payloadHash);
+    return applySnapshot(clients, installationId, linked.id, contact, payloadHash, linked.revision);
   }
+  if (!contact.isClient) return null;
 
   const match = await resolveUnambiguousMatch(clients, installationId, contact);
   if (match === "ambiguous") return null;
@@ -86,7 +89,7 @@ export async function upsertHoldedContact(
   if (match) {
     // Un cliente local existente sin enlace (o con el mismo enlace) recibe el
     // vínculo y el snapshot; Holded manda sobre los campos sincronizados.
-    return applySnapshot(clients, installationId, match.id, contact, payloadHash);
+    return applySnapshot(clients, installationId, match.id, contact, payloadHash, match.revision);
   }
 
   // No existe localmente: lo creamos ya enlazado.
@@ -105,12 +108,13 @@ export async function upsertHoldedContact(
   });
 }
 
-function applySnapshot(
+async function applySnapshot(
   clients: ClientRepository,
   installationId: string,
   id: string,
   contact: HoldedClientContact,
   payloadHash: string,
+  expectedRevision: number,
 ): Promise<ClientRecord> {
   const input: ApplyHoldedSnapshotInput = {
     installationId,
@@ -123,6 +127,7 @@ function applySnapshot(
     address: contact.address,
     holdedSnapshot: contact.snapshot,
     holdedPayloadHash: payloadHash,
+    expectedRevision,
   };
   return clients.applyHoldedSnapshot(input);
 }
@@ -164,6 +169,7 @@ export function createClientWithHolded(deps: ClientSyncDeps) {
         holdedContactId: remote.id,
         holdedSnapshot: remote.snapshot,
         holdedPayloadHash: hashHoldedSnapshot(remote.snapshot),
+        expectedRevision: local.revision,
       });
     } catch (error) {
       // El cliente local queda guardado y marcado como error (recuperable).
@@ -178,6 +184,7 @@ export function createClientWithHolded(deps: ClientSyncDeps) {
 // ---------------------------------------------------------------------------
 export function updateClientWithHolded(deps: ClientSyncDeps) {
   return async (input: UpdateClientCommand): Promise<ClientRecord> => {
+    return deps.clients.withSyncLock(input.installationId, input.id, async () => {
     // Optimistic locking local (lanza RevisionConflictError si está obsoleto).
     const updated = await deps.clients.update(input);
     if (!deps.holded || !updated.holdedContactId) return updated;
@@ -189,11 +196,13 @@ export function updateClientWithHolded(deps: ClientSyncDeps) {
         holdedContactId: remote.id,
         holdedSnapshot: remote.snapshot,
         holdedPayloadHash: hashHoldedSnapshot(remote.snapshot),
+        expectedRevision: updated.revision,
       });
     } catch (error) {
       await deps.clients.markSyncError(updated.installationId, updated.id, errorMessage(error));
       return (await deps.clients.getById(updated.installationId, updated.id)) ?? updated;
     }
+    });
   };
 }
 
@@ -234,7 +243,101 @@ export function searchClientsWithHolded(deps: ClientSyncDeps) {
       }
     }
 
-    const merged = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const merged = [...byId.values()].filter((client) => !client.deletedAt).sort((a, b) => a.name.localeCompare(b.name));
     return { clients: merged, holded: "ok" };
+  };
+}
+
+export function deleteClientWithHolded(deps: ClientSyncDeps) {
+  return async (input: { installationId: string; id: string; expectedRevision: number; deleteFromHolded: boolean }): Promise<ClientRecord> => {
+    return deps.clients.withSyncLock(input.installationId, input.id, async () => {
+      const local = await deps.clients.getById(input.installationId, input.id);
+      if (!local) throw new Error("client_not_found");
+      if (local.revision !== input.expectedRevision) throw new Error("revision_conflict");
+      if (local.deletedAt) return local;
+      if (local.holdedContactId) {
+        if (!input.deleteFromHolded) throw new Error("holded_delete_confirmation_required");
+        if (!deps.holded) throw new Error("holded_not_configured");
+        await deps.holded.deleteContact(local.holdedContactId);
+      }
+      return deps.clients.archive({ ...input, source: "local" });
+    });
+  };
+}
+
+export function syncClientWithHolded(deps: ClientSyncDeps) {
+  return async (input: { installationId: string; id: string; expectedRevision: number }): Promise<ClientRecord> => {
+    if (!deps.holded) throw new Error("holded_not_configured");
+    const gateway = deps.holded;
+    return deps.clients.withSyncLock(input.installationId, input.id, async () => {
+      const local = await deps.clients.getById(input.installationId, input.id);
+      if (!local || local.deletedAt) throw new Error("client_not_found");
+      if (local.revision !== input.expectedRevision) throw new Error("revision_conflict");
+      if (!local.holdedContactId) {
+        // A failed POST might have created the contact. Resolve exact identity before retry.
+        const candidates = (await gateway.searchContacts(local.name)).filter((c) => c.isClient &&
+          ((local.taxId && c.taxId?.toLowerCase() === local.taxId.toLowerCase()) || (local.email && c.email?.toLowerCase() === local.email.toLowerCase())));
+        if (candidates.length > 1) throw new Error("client_match_ambiguous");
+        if (!candidates.length && local.syncStatus === "error") throw new Error("holded_contact_creation_uncertain");
+        const remote = candidates[0] ?? await gateway.createFromLocal(toLocalContactInput(local));
+        return deps.clients.linkHolded({ ...input, holdedContactId: remote.id, holdedSnapshot: remote.snapshot, holdedPayloadHash: hashHoldedSnapshot(remote.snapshot) });
+      }
+      const remote = await gateway.getContact(local.holdedContactId);
+      if (!remote || !remote.isClient) return deps.clients.archive({ ...input, source: "holded" });
+      if (local.syncStatus === "pending" || local.syncStatus === "error") {
+        const pushed = await gateway.applyLocalChanges(local.holdedContactId, toLocalContactInput(local));
+        return deps.clients.linkHolded({ ...input, holdedContactId: pushed.id, holdedSnapshot: pushed.snapshot, holdedPayloadHash: hashHoldedSnapshot(pushed.snapshot) });
+      }
+      return (await upsertHoldedContact(deps.clients, input.installationId, remote)) ?? local;
+    });
+  };
+}
+
+export function syncClientsWithHolded(deps: ClientSyncDeps) {
+  return async (installationId: string) => {
+    if (!deps.holded) throw new Error("holded_not_configured");
+    const gateway = deps.holded;
+    return deps.clients.withSyncLock(installationId, "reconciliation", async () => {
+      const remote = new Map<string, HoldedClientContact>();
+      const cursors = new Set<string>();
+      let cursor: string | undefined;
+      // Read the complete inventory first: incomplete reads must never imply deletion.
+      for (let pageNumber = 0; ; pageNumber += 1) {
+        if (pageNumber >= 1000) throw new Error("holded_pagination_limit");
+        const page = await gateway.listContactsPage(cursor);
+        for (const contact of page.items) {
+          if (!contact.id) throw new Error("holded_invalid_contact");
+          remote.set(contact.id, contact);
+        }
+        if (!page.hasMore) break;
+        if (!page.cursor || cursors.has(page.cursor)) throw new Error("holded_invalid_cursor");
+        cursors.add(page.cursor);
+        cursor = page.cursor;
+      }
+      let updated = 0;
+      let archived = 0;
+      let conflicts = 0;
+      for (const contact of remote.values()) {
+        const before = await deps.clients.findByHoldedContactId(installationId, contact.id);
+        const result = await deps.clients.withSyncLock(installationId, before?.id ?? contact.id, () => upsertHoldedContact(deps.clients, installationId, contact));
+        if (!result) { if (contact.isClient && !before?.deletedAt) conflicts += 1; continue; }
+        if (result.deletedAt) archived += 1;
+        else if (!before || result.revision !== before.revision) updated += 1;
+        if (result.syncStatus === "pending" || result.syncStatus === "error" || result.syncStatus === "conflict") conflicts += 1;
+      }
+      for (const local of await deps.clients.search(installationId, "")) {
+        if (!local.holdedContactId || remote.has(local.holdedContactId)) continue;
+        const contact = await gateway.getContact(local.holdedContactId);
+        if (contact) continue;
+        await deps.clients.withSyncLock(installationId, local.id, async () => {
+          const current = await deps.clients.getById(installationId, local.id);
+          if (current && !current.deletedAt) {
+            await deps.clients.archive({ installationId, id: current.id, expectedRevision: current.revision, source: "holded" });
+            archived += 1;
+          }
+        });
+      }
+      return { scanned: remote.size, updated, archived, conflicts, syncedAt: new Date().toISOString() };
+    });
   };
 }

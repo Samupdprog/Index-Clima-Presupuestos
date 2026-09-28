@@ -1,9 +1,51 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHoldedClient } from "./client.js";
 import { HoldedApiError } from "./errors.js";
+import type { HoldedEstimateInput } from "./contracts.js";
 
 const API_KEY = "super-secret-key-1234";
 const BASE = "https://api.holded.com/api/v2";
+
+const estimateInput: HoldedEstimateInput = { contact_id: "contact", description: "TEST", date: "2026-09-24", currency: "EUR", discount: "0", tax_included: false, items: [{ name: "TEST", units: "3", price: "33.3333333333", discount: "0", taxes: ["real-igic-7"] }] };
+
+describe("Holded Estimates v2", () => {
+  it("POSTs final decimal prices through Bearer v2 and retains real tax keys", async () => {
+    const fetcher = mk(async () => jsonResponse({ id: "estimate-1" }, 201));
+    const result = await client(fetcher).saveEstimate(estimateInput);
+    const [url, request] = fetcher.mock.calls[0]!;
+    expect(url).toBe(`${BASE}/estimates`);
+    expect(request!.method).toBe("POST");
+    expect((request!.headers as Record<string, string>).authorization).toBe(`Bearer ${API_KEY}`);
+    expect((request!.headers as Record<string, string>).key).toBeUndefined();
+    expect(JSON.parse(request!.body as string)).toMatchObject({ contact_id: "contact", tax_included: false, discount: 0, items: [{ units: 3, price: 33.3333333333, taxes: ["real-igic-7"] }] });
+    expect(result.id).toBe("estimate-1");
+  });
+
+  it("GETs existing estimate before PUT and preserves unrelated remote fields", async () => {
+    const fetcher = mk(async (_url, init) => init?.method === "GET" ? jsonResponse({ id: "estimate-1", due_date: "2026-10-24", custom_fields: [{ field: "customer-ref", value: "external" }], subtotal: "5", lines: [] }) : jsonResponse({ id: "estimate-1" }));
+    await client(fetcher).saveEstimate(estimateInput, "estimate-1");
+    expect(fetcher.mock.calls.map(([url, request]) => [url, request?.method])).toEqual([[`${BASE}/estimates/estimate-1`, "GET"], [`${BASE}/estimates/estimate-1`, "PUT"]]);
+    expect(JSON.parse(fetcher.mock.calls[1]![1]!.body as string)).toMatchObject({ due_date: "2026-10-24", custom_fields: [{ field: "customer-ref", value: "external" }] });
+  });
+
+  it("supports documented 204 DELETE contacts and estimates", async () => {
+    const fetcher = mk(async () => new Response(null, { status: 204 }));
+    await client(fetcher).deleteContact("contact-1");
+    await client(fetcher).deleteEstimate("estimate-1");
+    expect(fetcher.mock.calls.every(([, request]) => request?.method === "DELETE")).toBe(true);
+  });
+
+  it("rejects malformed inventories instead of treating them as empty and deleting clients", async () => {
+    const fetcher = mk(async () => jsonResponse({ unexpected: [] }));
+    await expect(client(fetcher).listContactsPage()).rejects.toMatchObject({ code: "invalid_response" });
+  });
+
+  it("reports Retry-After and does not replay failed mutations", async () => {
+    const fetcher = mk(async () => new Response(JSON.stringify({ detail: "Too many requests" }), { status: 429, headers: { "retry-after": "60" } }));
+    await expect(client(fetcher).saveEstimate(estimateInput)).rejects.toMatchObject({ code: "rate_limited", retryAfterSeconds: 60 });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+});
 
 type FetchHandler = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 

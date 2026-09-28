@@ -5,6 +5,9 @@ import {
   searchClientsWithHolded,
   updateClientWithHolded,
   upsertHoldedContact,
+  deleteClientWithHolded,
+  syncClientsWithHolded,
+  syncClientWithHolded,
 } from "./client-sync.js";
 import type {
   ApplyHoldedSnapshotInput,
@@ -54,6 +57,14 @@ function fakeRepo(seed: ClientRecord[] = []) {
     markSyncError: vi.fn(),
   };
   const repo: ClientRepository = {
+    async withSyncLock(_installation, _id, work) { return work(); },
+    async archive(input) {
+      const current = store.get(input.id)!;
+      if (current.revision !== input.expectedRevision) throw new RevisionConflict();
+      const archived = { ...current, revision: current.revision + 1, deletedAt: new Date(), deletionSource: input.source };
+      store.set(current.id, archived);
+      return archived;
+    },
     async create(input: CreateClientCommand) {
       counter += 1;
       const record = baseRecord({
@@ -77,7 +88,7 @@ function fakeRepo(seed: ClientRecord[] = []) {
     },
     async search(_i, query) {
       const q = query.trim().toLowerCase();
-      return [...store.values()].filter((r) => !q || r.name.toLowerCase().includes(q));
+      return [...store.values()].filter((r) => !r.deletedAt && (!q || r.name.toLowerCase().includes(q)));
     },
     async findByHoldedContactId(_i, holdedId) {
       return [...store.values()].find((r) => r.holdedContactId === holdedId) ?? null;
@@ -159,6 +170,8 @@ function contact(partial: Partial<HoldedClientContact> & { id: string }): Holded
 
 function fakeGateway(overrides: Partial<HoldedContactGateway> = {}): HoldedContactGateway {
   return {
+    listContactsPage: vi.fn(async () => ({ items: [], cursor: null, hasMore: false })),
+    deleteContact: vi.fn(async () => {}),
     searchContacts: vi.fn(async () => []),
     getContact: vi.fn(async () => null),
     createFromLocal: vi.fn(async (input) => contact({ id: "remote-1", name: input.name, snapshot: { id: "remote-1", name: input.name } })),
@@ -300,5 +313,56 @@ describe("searchClientsWithHolded — graceful degradation", () => {
     expect(result.holded).toBe("ok");
     expect(result.clients.some((c) => c.holdedContactId === "remote-1")).toBe(true);
     expect(result.clients.length).toBe(2);
+  });
+});
+
+describe("client deletion and reconciliation", () => {
+  it("requires explicit linked deletion confirmation and keeps local history", async () => {
+    const { repo, store } = fakeRepo([baseRecord({ id: "local-1", name: "TEST", holdedContactId: "remote-1", syncStatus: "synced" })]);
+    const holded = fakeGateway();
+    const remove = deleteClientWithHolded({ clients: repo, holded });
+    await expect(remove({ installationId: INSTALLATION, id: "local-1", expectedRevision: 0, deleteFromHolded: false })).rejects.toThrow("holded_delete_confirmation_required");
+    expect(holded.deleteContact).not.toHaveBeenCalled();
+    await remove({ installationId: INSTALLATION, id: "local-1", expectedRevision: 0, deleteFromHolded: true });
+    expect(store.get("local-1")?.deletedAt).toBeInstanceOf(Date);
+    expect(await repo.search(INSTALLATION, "")).toEqual([]);
+    expect(holded.deleteContact).toHaveBeenCalledWith("remote-1");
+  });
+
+  it("does not archive locally if remote deletion fails", async () => {
+    const { repo, store } = fakeRepo([baseRecord({ id: "local-1", name: "TEST", holdedContactId: "remote-1" })]);
+    const holded = fakeGateway({ deleteContact: vi.fn(async () => { throw new Error("forbidden"); }) });
+    await expect(deleteClientWithHolded({ clients: repo, holded })({ installationId: INSTALLATION, id: "local-1", expectedRevision: 0, deleteFromHolded: true })).rejects.toThrow("forbidden");
+    expect(store.get("local-1")?.deletedAt).toBeUndefined();
+  });
+
+  it("reads every cursor page and confirms absent linked contacts before archiving", async () => {
+    const { repo, store } = fakeRepo([baseRecord({ id: "deleted", name: "Deleted", holdedContactId: "remote-deleted", syncStatus: "synced" })]);
+    const listContactsPage = vi.fn().mockResolvedValueOnce({ items: [contact({ id: "r1", name: "First" })], cursor: "page2", hasMore: true }).mockResolvedValueOnce({ items: [contact({ id: "r2", name: "Second" })], cursor: null, hasMore: false });
+    const holded = fakeGateway({ listContactsPage, getContact: vi.fn(async () => null) });
+    const result = await syncClientsWithHolded({ clients: repo, holded })(INSTALLATION);
+    expect(result).toMatchObject({ scanned: 2, archived: 1 });
+    expect(listContactsPage).toHaveBeenLastCalledWith("page2");
+    expect(store.get("deleted")?.deletionSource).toBe("holded");
+  });
+
+  it("does not infer deletion from a failed later page", async () => {
+    const { repo, store } = fakeRepo([baseRecord({ id: "local", name: "TEST", holdedContactId: "remote" })]);
+    const holded = fakeGateway({ listContactsPage: vi.fn().mockResolvedValueOnce({ items: [], cursor: "page2", hasMore: true }).mockRejectedValueOnce(new Error("rate_limited")) });
+    await expect(syncClientsWithHolded({ clients: repo, holded })(INSTALLATION)).rejects.toThrow("rate_limited");
+    expect(store.get("local")?.deletedAt).toBeUndefined();
+  });
+
+  it("does not overwrite pending local edits with a remote read", async () => {
+    const { repo } = fakeRepo([baseRecord({ id: "local", name: "Local edit", holdedContactId: "remote", syncStatus: "error" })]);
+    const result = await upsertHoldedContact(repo, INSTALLATION, contact({ id: "remote", name: "Old remote" }));
+    expect(result?.name).toBe("Local edit");
+  });
+
+  it("rejects stale revisions before a sync can mutate Holded", async () => {
+    const { repo } = fakeRepo([baseRecord({ id: "local", name: "TEST", revision: 5 })]);
+    const holded = fakeGateway();
+    await expect(syncClientWithHolded({ clients: repo, holded })({ installationId: INSTALLATION, id: "local", expectedRevision: 2 })).rejects.toThrow("revision_conflict");
+    expect(holded.createFromLocal).not.toHaveBeenCalled();
   });
 });

@@ -81,10 +81,17 @@ export function mergeLocalChangesIntoHoldedContact(
   const merged: Record<string, unknown> = { ...existing };
   // `id` va en la URL, no en el cuerpo.
   delete merged.id;
+  delete merged.created_at;
+  delete merged.updated_at;
+  // GET exposes account DTOs, whereas PUT accepts their numeric account code.
+  for (const key of ["client_record", "supplier_record"]) {
+    const record = merged[key];
+    if (record && typeof record === "object") merged[key] = (record as { num?: number }).num ?? null;
+  }
 
   if (changes.name !== undefined) merged.name = changes.name;
   if (changes.taxId !== undefined) merged.code = changes.taxId ?? "";
-  if (changes.email !== undefined) merged.email = changes.email ?? "";
+  if (changes.email !== undefined) merged.email = changes.email?.trim() || null;
   if (changes.phone !== undefined) merged.phone = changes.phone ?? "";
 
   if (changes.address !== undefined) {

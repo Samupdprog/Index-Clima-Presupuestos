@@ -1,4 +1,6 @@
 export interface QuoteWorkflowRepository {
+  importQuoteLines(input: Record<string, unknown>): Promise<unknown>;
+  recalculateQuote(input: Record<string, unknown>): Promise<unknown>;
   createLineWithDetails(input: Record<string, unknown>): Promise<unknown>;
   updateLineDetails(input: Record<string, unknown>): Promise<unknown>;
   addLine(input: Record<string, unknown>): Promise<unknown>;

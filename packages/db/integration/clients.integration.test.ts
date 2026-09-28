@@ -26,6 +26,7 @@ import {
   auditEvents,
   catalogMaterials,
   createCatalogRepository,
+  createDataResetRepository,
 } from "../src/index.js";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -49,7 +50,8 @@ describe("clients repository integration", () => {
   });
 
   afterAll(async () => {
-    await db.delete(clients).where(eq(clients.id, clientId));
+    await createDataResetRepository(db).reset(installationId);
+    await db.delete(auditEvents).where(eq(auditEvents.installationId, installationId));
     await db.delete(installations).where(eq(installations.id, installationId));
     await pool.end();
   });
@@ -99,6 +101,8 @@ describe("installation config integration", () => {
   const repo = createInstallationRepository(db);
 
   afterAll(async () => {
+    await createDataResetRepository(db).reset(installationId);
+    await db.delete(auditEvents).where(eq(auditEvents.installationId, installationId));
     await db.delete(installations).where(eq(installations.id, installationId));
     await pool.end();
   });
@@ -149,7 +153,8 @@ describe("clients Holded sync integration", () => {
   });
 
   afterAll(async () => {
-    await db.delete(clients).where(eq(clients.installationId, installationId));
+    await createDataResetRepository(db).reset(installationId);
+    await db.delete(auditEvents).where(eq(auditEvents.installationId, installationId));
     await db.delete(installations).where(eq(installations.id, installationId));
     await pool.end();
   });
@@ -226,9 +231,8 @@ describe("quotes repository integration", () => {
   });
 
   afterAll(async () => {
-    for (const quoteId of quoteIds) await db.delete(quoteLines).where(eq(quoteLines.quoteId, quoteId));
-    await db.delete(quotes).where(eq(quotes.installationId, installationId));
-    await db.delete(referenceCounters).where(eq(referenceCounters.installationId, installationId));
+    await createDataResetRepository(db).reset(installationId);
+    await db.delete(auditEvents).where(eq(auditEvents.installationId, installationId));
     await db.delete(installations).where(eq(installations.id, installationId));
     await pool.end();
   });
@@ -297,7 +301,8 @@ describe("catalog material import integration", () => {
   });
 
   afterAll(async () => {
-    await db.delete(catalogMaterials).where(eq(catalogMaterials.installationId, installationId));
+    await createDataResetRepository(db).reset(installationId);
+    await db.delete(auditEvents).where(eq(auditEvents.installationId, installationId));
     await db.delete(installations).where(eq(installations.id, installationId));
     await pool.end();
   });
@@ -327,26 +332,8 @@ describe("quote vertical workflow integration", () => {
   });
 
   afterAll(async () => {
-    if (quoteId) {
-      await db.delete(quoteLineCalculations).where(eq(quoteLineCalculations.calculationRunId, quoteId));
-      const runs = await db.select({ id: quoteCalculationRuns.id }).from(quoteCalculationRuns).where(eq(quoteCalculationRuns.quoteId, quoteId));
-      for (const run of runs) await db.delete(quoteLineCalculations).where(eq(quoteLineCalculations.calculationRunId, run.id));
-      await db.delete(quoteCalculationRuns).where(eq(quoteCalculationRuns.quoteId, quoteId));
-      await db.delete(quoteVersions).where(eq(quoteVersions.quoteId, quoteId));
-      await db.delete(auditEvents).where(eq(auditEvents.entityId, quoteId));
-      const adjustments = await db.select({ id: quotePriceAdjustments.id }).from(quotePriceAdjustments).where(eq(quotePriceAdjustments.quoteId, quoteId));
-      for (const adjustment of adjustments) await db.delete(quotePriceAdjustmentTargets).where(eq(quotePriceAdjustmentTargets.adjustmentId, adjustment.id));
-      const lines = await db.select({ id: quoteLines.id }).from(quoteLines).where(eq(quoteLines.quoteId, quoteId));
-      for (const line of lines) {
-        await db.delete(quoteLineDiscounts).where(eq(quoteLineDiscounts.quoteLineId, line.id));
-        await db.delete(quoteLineLaborEntries).where(eq(quoteLineLaborEntries.quoteLineId, line.id));
-      }
-      await db.delete(quoteLines).where(eq(quoteLines.quoteId, quoteId));
-      await db.delete(quotePriceAdjustments).where(eq(quotePriceAdjustments.quoteId, quoteId));
-      await db.delete(quoteTextBlocks).where(eq(quoteTextBlocks.quoteId, quoteId));
-      await db.delete(quotes).where(eq(quotes.id, quoteId));
-      await db.delete(referenceCounters).where(eq(referenceCounters.installationId, installationId));
-    }
+    await createDataResetRepository(db).reset(installationId);
+    await db.delete(auditEvents).where(eq(auditEvents.installationId, installationId));
     await db.delete(installations).where(eq(installations.id, installationId));
     await pool.end();
   });
@@ -379,7 +366,9 @@ describe("quote vertical workflow integration", () => {
     expect(run?.saleWithoutTax).toBe("580.00");
     expect(run?.taxTotal).toBe("19.78");
     expect(await db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, quoteId))).toHaveLength(9);
-    expect(await db.select().from(auditEvents).where(eq(auditEvents.entityId, quoteId))).toHaveLength(9);
+    const events = await db.select().from(auditEvents).where(eq(auditEvents.entityId, quoteId));
+    expect(events).toHaveLength(10);
+    expect(events.some((event) => event.action === "quote.created")).toBe(true);
   });
 
   it("deletes a line after calculations have been persisted", async () => {

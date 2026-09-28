@@ -1,5 +1,8 @@
 import {
   type HoldedContact,
+  type HoldedEstimate,
+  type HoldedEstimateInput,
+  type HoldedTax,
   type HoldedContactListResponse,
   type HoldedContactMutationResult,
   type HoldedCreateContactInput,
@@ -12,8 +15,6 @@ import { HoldedApiError, mapStatusToErrorCode } from "./errors.js";
 type Fetch = typeof fetch;
 
 const DEFAULT_BASE_URL = "https://api.holded.com/api/v2";
-/** Base legacy v1, sólo para la exportación de presupuestos aún no migrada. */
-const LEGACY_INVOICING_V1_BASE_URL = "https://api.holded.com/api/invoicing/v1";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface HoldedLogEvent {
@@ -69,7 +70,7 @@ function normalizeContactList(body: HoldedContactListResponse | unknown): Holded
     if (Array.isArray(record.items)) return record.items as HoldedContact[];
     if (Array.isArray(record.data)) return record.data as HoldedContact[];
   }
-  return [];
+  throw new HoldedApiError("invalid_response");
 }
 
 export function createHoldedClient(options: HoldedClientOptions) {
@@ -93,7 +94,7 @@ export function createHoldedClient(options: HoldedClientOptions) {
     method: string,
     path: string,
     body?: unknown,
-    opts?: { baseUrl?: string; legacyKeyAuth?: boolean },
+
   ): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -102,11 +103,10 @@ export function createHoldedClient(options: HoldedClientOptions) {
     const pathForLog = path.split("?")[0] ?? path; // sin query (nunca secretos)
     let response: Response;
     try {
-      response = await fetcher(`${opts?.baseUrl ?? baseUrl}${path}`, {
+      response = await fetcher(`${baseUrl}${path}`, {
         method,
         headers: {
-          // v2 usa Bearer; sólo la exportación legacy v1 usa la cabecera `key:`.
-          ...(opts?.legacyKeyAuth ? { key: apiKey } : { authorization: `Bearer ${apiKey}` }),
+          authorization: `Bearer ${apiKey}`,
           accept: "application/json",
           ...(hasBody ? { "content-type": "application/json" } : {}),
         },
@@ -128,7 +128,8 @@ export function createHoldedClient(options: HoldedClientOptions) {
       const code = mapStatusToErrorCode(response.status);
       log({ method, path: pathForLog, status: response.status, code, ok: false, durationMs: Date.now() - startedAt });
       const errorBody = parsed === INVALID_JSON ? undefined : parsed;
-      throw new HoldedApiError(code, response.status, errorBody);
+      const retryAfter = response.headers.get("retry-after");
+      throw new HoldedApiError(code, response.status, errorBody, retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : null);
     }
     if (parsed === INVALID_JSON) {
       log({ method, path: pathForLog, status: response.status, code: "invalid_response", ok: false, durationMs: Date.now() - startedAt });
@@ -148,9 +149,10 @@ export function createHoldedClient(options: HoldedClientOptions) {
     },
 
     /** Página cruda con cursor, por si se necesita paginar en el futuro. */
-    async listContactsPage(params: { cursor?: string } = {}): Promise<HoldedContactListResponse> {
+    async listContactsPage(params: { cursor?: string; limit?: number } = {}): Promise<HoldedContactListResponse> {
       const search = new URLSearchParams();
       if (params.cursor) search.set("cursor", params.cursor);
+      if (params.limit) search.set("limit", String(Math.min(100, Math.max(1, params.limit))));
       const suffix = search.toString() ? `?${search.toString()}` : "";
       const body = await request<HoldedContactListResponse>("GET", `/contacts${suffix}`);
       return {
@@ -171,10 +173,7 @@ export function createHoldedClient(options: HoldedClientOptions) {
 
     async getContact(contactId: string): Promise<HoldedContact> {
       const contact = await request<HoldedContact>("GET", `/contacts/${encodeURIComponent(contactId)}`);
-      if (!contact || typeof contact !== "object" || !extractId({ id: contact.id })) {
-        // Garantizamos que el snapshot tenga id estable.
-        return { ...(contact as object), id: contactId } as HoldedContact;
-      }
+      if (!contact || typeof contact !== "object" || !extractId({ id: contact.id })) throw new HoldedApiError("invalid_response");
       return contact;
     },
 
@@ -190,6 +189,54 @@ export function createHoldedClient(options: HoldedClientOptions) {
       const raw = await request<unknown>("PUT", `/contacts/${encodeURIComponent(contactId)}`, body);
       const id = extractId(raw) ?? contactId;
       return { id, raw };
+    },
+
+    async deleteContact(contactId: string): Promise<void> {
+      await request("DELETE", `/contacts/${encodeURIComponent(contactId)}`);
+    },
+
+    async listTaxes(): Promise<HoldedTax[]> {
+      const body = await request<{ items: HoldedTax[] }>("GET", "/taxes");
+      if (!body || !Array.isArray(body.items)) throw new HoldedApiError("invalid_response");
+      return body.items;
+    },
+
+    async listEstimatesPage(params: { cursor?: string; contactId?: string } = {}) {
+      const search = new URLSearchParams({ limit: "100" });
+      if (params.cursor) search.set("cursor", params.cursor);
+      if (params.contactId) search.set("contact_id", params.contactId);
+      const body = await request<{ items: HoldedEstimate[]; cursor: string | null; has_more: boolean }>("GET", `/estimates?${search}`);
+      if (!body || !Array.isArray(body.items)) throw new HoldedApiError("invalid_response");
+      return body;
+    },
+
+    async getEstimate(id: string): Promise<HoldedEstimate> {
+      const body = await request<HoldedEstimate>("GET", `/estimates/${encodeURIComponent(id)}`);
+      if (!body || typeof body.id !== "string") throw new HoldedApiError("invalid_response");
+      return body;
+    },
+
+    async saveEstimate(input: HoldedEstimateInput, documentId?: string | null) {
+      // Conversion to JSON numbers is only transport encoding; no monetary arithmetic here.
+      const encodeDecimal = (value: string) => {
+        if (!/^-?\d+(?:\.\d+)?$/.test(value) || !Number.isFinite(Number(value))) throw new HoldedApiError("unprocessable");
+        return Number(value);
+      };
+      const items = input.items.map((item) => ({ ...item, units: encodeDecimal(item.units), price: encodeDecimal(item.price), discount: encodeDecimal(item.discount) }));
+      let existing: Record<string, unknown> = {};
+      if (documentId) {
+        existing = { ...await client.getEstimate(documentId) };
+        for (const key of ["id", "lines", "subtotal", "tax", "total", "created_at", "updated_at"]) delete existing[key];
+      }
+      const payload = { ...existing, ...input, discount: encodeDecimal(input.discount), items };
+      const raw = await request<unknown>(documentId ? "PUT" : "POST", documentId ? `/estimates/${encodeURIComponent(documentId)}` : "/estimates", payload);
+      const id = documentId ?? extractId(raw);
+      if (!id) throw new HoldedApiError("invalid_response");
+      return { id, response: raw };
+    },
+
+    async deleteEstimate(id: string): Promise<void> {
+      await request("DELETE", `/estimates/${encodeURIComponent(id)}`);
     },
 
     async checkHealth(): Promise<HoldedHealthResult> {
@@ -229,67 +276,9 @@ export function createHoldedClient(options: HoldedClientOptions) {
       }
     },
 
-    /**
-     * @deprecated Exportación de presupuestos aún sobre la API legacy v1
-     * (`/api/invoicing/v1/documents/estimate`). Se migrará en la fase de
-     * Estimates v2; queda aislada aquí y fuera del flujo de clientes.
-     */
-    async saveEstimate(input: LegacyEstimateInput) {
-      const path = input.documentId
-        ? `/documents/estimate/${encodeURIComponent(input.documentId)}`
-        : "/documents/estimate";
-      const payload = {
-        desc: `${input.reference} · ${input.title}`,
-        date: input.date,
-        notes: input.notes,
-        items: input.items,
-        ...(!input.documentId
-          ? {
-              contactName: input.contactName,
-              ...(input.contactCode ? { contactCode: input.contactCode } : {}),
-              ...(input.contactEmail ? { contactEmail: input.contactEmail } : {}),
-              ...(input.contactAddress ? { contactAddress: input.contactAddress } : {}),
-            }
-          : {}),
-      };
-      const raw = await request<unknown>(
-        input.documentId ? "PUT" : "POST",
-        path,
-        payload,
-        { baseUrl: LEGACY_INVOICING_V1_BASE_URL, legacyKeyAuth: true },
-      );
-      if (input.documentId) return { id: input.documentId, response: raw };
-      const id = extractId(raw);
-      if (!id) throw new HoldedApiError("invalid_response");
-      return { id, response: raw };
-    },
   };
 
   return client;
 }
 
 export type HoldedClient = ReturnType<typeof createHoldedClient>;
-
-// ---------------------------------------------------------------------------
-// Tipos legacy de la exportación de presupuestos (pendiente de migrar a v2).
-// ---------------------------------------------------------------------------
-export interface LegacyEstimateItem {
-  name: string;
-  desc?: string;
-  units: number;
-  price: number;
-  tax: number;
-}
-
-export interface LegacyEstimateInput {
-  documentId?: string | null;
-  reference: string;
-  title: string;
-  date: number;
-  contactCode?: string;
-  contactName: string;
-  contactEmail?: string;
-  contactAddress?: string;
-  notes?: string;
-  items: LegacyEstimateItem[];
-}

@@ -22,6 +22,7 @@ export class HoldedApiError extends Error {
     public readonly code: HoldedErrorCode,
     public readonly status: number | null = null,
     public readonly responseBody: unknown = undefined,
+    public readonly retryAfterSeconds: number | null = null,
   ) {
     super(`holded_api_error:${code}`);
     this.name = "HoldedApiError";

@@ -60,6 +60,51 @@ export interface HoldedCreateContactInput {
  */
 export type HoldedUpdateContactInput = Record<string, unknown>;
 
+export interface HoldedTax {
+  id: string;
+  key: string;
+  name: string;
+  amount: string | null;
+  scope: string | null;
+  group: string;
+  type: string;
+  status: boolean;
+}
+
+/** Monetary strings remain canonical until JSON serialization at the HTTP boundary. */
+export interface HoldedEstimateItem {
+  name: string;
+  description?: string;
+  type?: "product" | "service" | "title";
+  units: string;
+  price: string;
+  discount: string;
+  taxes: string[];
+  unit_type?: string;
+}
+
+export interface HoldedEstimateInput {
+  contact_id: string;
+  description: string;
+  date: string;
+  notes?: string;
+  tags?: string[];
+  currency: "EUR";
+  discount: string;
+  tax_included: false;
+  items: HoldedEstimateItem[];
+}
+
+export interface HoldedEstimate {
+  id: string;
+  contact_id: string;
+  subtotal: string;
+  tax: string;
+  total: string;
+  lines: Array<{ name: string; units: string; price: string; discount: string; tax: string; taxes: string[] }>;
+  [key: string]: unknown;
+}
+
 /** Resultado normalizado de create/update. */
 export interface HoldedContactMutationResult {
   id: string;

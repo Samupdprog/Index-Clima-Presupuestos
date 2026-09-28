@@ -42,6 +42,8 @@ export const clients = pgTable("clients", {
   holdedPayloadHash: text("holded_payload_hash"),
   holdedSnapshot: jsonb("holded_snapshot").$type<Record<string, unknown>>(),
   syncError: text("sync_error"),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletionSource: text("deletion_source"),
   revision: integer("revision").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -108,6 +110,7 @@ export const employees = pgTable("employees", {
 
 export const employeeSupplements = pgTable("employee_supplements", {
   id: uuid("id").defaultRandom().primaryKey(),
+  installationId: uuid("installation_id").notNull().references(() => installations.id),
   employeeId: uuid("employee_id").references(() => employees.id),
   name: text("name").notNull(),
   amount: numeric("amount", { precision: 18, scale: 6 }).notNull().default("0"),

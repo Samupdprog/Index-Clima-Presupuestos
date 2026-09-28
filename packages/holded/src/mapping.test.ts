@@ -99,6 +99,17 @@ describe("mergeLocalChangesIntoHoldedContact — full replacement safety", () =>
     expect(remote).toEqual(snapshot);
   });
 
+  it("maps GET accounting DTOs to the numeric codes required by PUT", () => {
+    const merged = mergeLocalChangesIntoHoldedContact({ ...remote, client_record: { num: 4300001, name: "Client account" }, supplier_record: { num: 4000001, name: "Supplier account" }, created_at: "yesterday" }, { name: "Renamed" });
+    expect(merged.client_record).toBe(4300001);
+    expect(merged.supplier_record).toBe(4000001);
+    expect(merged.created_at).toBeUndefined();
+  });
+
+  it("clears email using null accepted by the optional email schema", () => {
+    expect(mergeLocalChangesIntoHoldedContact(remote, { email: "" }).email).toBeNull();
+  });
+
   it("clearing a field sends an empty string (explicit), never drops the key", () => {
     const merged = mergeLocalChangesIntoHoldedContact(remote, { taxId: null });
     expect(merged.code).toBe("");

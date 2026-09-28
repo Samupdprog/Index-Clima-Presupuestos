@@ -1,7 +1,9 @@
-import { and, eq, ilike, or, sql } from "drizzle-orm";
+import { and, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "../client.js";
 import { RevisionConflictError } from "../errors.js";
 import { clients } from "../schema/common.js";
+import { auditEvents } from "../schema/operations.js";
+import { auditActor } from "../audit-context.js";
 
 export type ClientSyncStatus = "pending" | "synced" | "error" | "conflict";
 
@@ -31,6 +33,7 @@ export interface LinkHoldedInput {
   holdedContactId: string;
   holdedSnapshot: Record<string, unknown>;
   holdedPayloadHash: string;
+  expectedRevision?: number;
 }
 
 export interface ApplyHoldedSnapshotInput {
@@ -44,14 +47,25 @@ export interface ApplyHoldedSnapshotInput {
   address: string | null;
   holdedSnapshot: Record<string, unknown>;
   holdedPayloadHash: string;
+  expectedRevision?: number;
 }
 
 export function createClientRepository(db: Database) {
   return {
+    async withSyncLock<T>(installationId: string, id: string, work: () => Promise<T>): Promise<T> {
+      return db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`client:${installationId}:${id}`}, 0))`);
+        return work();
+      });
+    },
+
     async create(input: CreateClientInput) {
-      const [client] = await db.insert(clients).values(input).returning();
-      if (!client) throw new Error("client_insert_failed");
-      return client;
+      return db.transaction(async (tx) => {
+        const [client] = await tx.insert(clients).values(input).returning();
+        if (!client) throw new Error("client_insert_failed");
+        await tx.insert(auditEvents).values({ installationId: input.installationId, ...auditActor(), action: "client.create", entityType: "client", entityId: client.id, after: { revision: client.revision } });
+        return client;
+      });
     },
 
     async getById(installationId: string, id: string) {
@@ -75,7 +89,7 @@ export function createClientRepository(db: Database) {
             ),
           )
         : eq(clients.installationId, installationId);
-      return db.select().from(clients).where(filter).orderBy(clients.name);
+      return db.select().from(clients).where(and(filter, isNull(clients.deletedAt))).orderBy(clients.name);
     },
 
     async findByHoldedContactId(installationId: string, holdedContactId: string) {
@@ -91,31 +105,35 @@ export function createClientRepository(db: Database) {
       return db
         .select()
         .from(clients)
-        .where(and(eq(clients.installationId, installationId), sql`lower(${clients.taxId}) = lower(${taxId})`));
+        .where(and(eq(clients.installationId, installationId), isNull(clients.deletedAt), sql`lower(trim(${clients.taxId})) = lower(trim(${taxId}))`));
     },
 
     async findByEmail(installationId: string, email: string) {
       return db
         .select()
         .from(clients)
-        .where(and(eq(clients.installationId, installationId), sql`lower(${clients.email}) = lower(${email})`));
+        .where(and(eq(clients.installationId, installationId), isNull(clients.deletedAt), sql`lower(trim(${clients.email})) = lower(trim(${email}))`));
     },
 
     async update(input: UpdateClientInput) {
+      return db.transaction(async (tx) => {
       const { id, installationId, expectedRevision, ...changes } = input;
-      const [client] = await db
+      const [client] = await tx
         .update(clients)
-        .set({ ...changes, revision: expectedRevision + 1, updatedAt: new Date() })
+        .set({ ...changes, syncStatus: "pending", revision: expectedRevision + 1, updatedAt: new Date() })
         .where(
           and(
             eq(clients.id, id),
             eq(clients.installationId, installationId),
             eq(clients.revision, expectedRevision),
+            isNull(clients.deletedAt),
           ),
         )
         .returning();
       if (!client) throw new RevisionConflictError("client", id);
+      await tx.insert(auditEvents).values({ installationId, ...auditActor(), action: "client.update", entityType: "client", entityId: id, after: { revision: client.revision } });
       return client;
+      });
     },
 
     /** Enlaza un cliente local recién creado con su contacto de Holded. */
@@ -129,9 +147,10 @@ export function createClientRepository(db: Database) {
           syncStatus: "synced",
           syncError: null,
           lastSyncedAt: new Date(),
+          lastSyncedRevision: sql`${clients.revision}`,
           updatedAt: new Date(),
         })
-        .where(and(eq(clients.id, input.id), eq(clients.installationId, input.installationId)))
+        .where(and(eq(clients.id, input.id), eq(clients.installationId, input.installationId), isNull(clients.deletedAt), input.expectedRevision === undefined ? undefined : eq(clients.revision, input.expectedRevision)))
         .returning();
       if (!client) throw new Error("client_link_failed");
       return client;
@@ -156,10 +175,11 @@ export function createClientRepository(db: Database) {
           syncStatus: "synced",
           syncError: null,
           lastSyncedAt: new Date(),
+          lastSyncedRevision: sql`${clients.revision} + 1`,
           revision: sql`${clients.revision} + 1`,
           updatedAt: new Date(),
         })
-        .where(and(eq(clients.id, input.id), eq(clients.installationId, input.installationId)))
+        .where(and(eq(clients.id, input.id), eq(clients.installationId, input.installationId), isNull(clients.deletedAt), input.expectedRevision === undefined ? undefined : eq(clients.revision, input.expectedRevision)))
         .returning();
       if (!client) throw new Error("client_snapshot_failed");
       return client;
@@ -170,6 +190,16 @@ export function createClientRepository(db: Database) {
         .update(clients)
         .set({ syncStatus: "error", syncError: message.slice(0, 500), updatedAt: new Date() })
         .where(and(eq(clients.id, id), eq(clients.installationId, installationId)));
+    },
+
+    async archive(input: { installationId: string; id: string; expectedRevision: number; source: "local" | "holded" }) {
+      return db.transaction(async (tx) => {
+        const [client] = await tx.update(clients).set({ deletedAt: new Date(), deletionSource: input.source, revision: input.expectedRevision + 1, syncStatus: "synced", syncError: null, lastSyncedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(clients.id, input.id), eq(clients.installationId, input.installationId), eq(clients.revision, input.expectedRevision), isNull(clients.deletedAt))).returning();
+        if (!client) throw new RevisionConflictError("client", input.id);
+        await tx.insert(auditEvents).values({ installationId: input.installationId, ...auditActor(), action: "client.archive", entityType: "client", entityId: input.id, after: { revision: client.revision, source: input.source } });
+        return client;
+      });
     },
   };
 }

@@ -1,10 +1,21 @@
 import { z } from "zod/v4";
 
-export const catalogMutationSchema = z.object({
-  name: z.string().min(1),
-}).passthrough();
-
-export const catalogUpdateSchema = z.record(z.string(), z.unknown());
+const text = z.string().trim().max(2000);
+const decimal = z.string().regex(/^\d{1,12}(?:\.\d{1,6})?$/);
+const rate = z.string().transform((value) => value.replace(/\.0+$/, "")).pipe(z.enum(["0", "3", "7", "15"]));
+const named = { name: text.min(1), active: z.boolean().optional() };
+const schemas = {
+  materials: z.object({ ...named, supplierId: z.uuid().nullable().optional(), supplierNameSnapshot: text.optional(), supplierCode: text.optional(), description: text.optional(), unit: text.min(1).optional(), supplierUnitPrice: decimal.nullable().optional(), saleUnitPrice: decimal.nullable().optional(), igicRate: rate.optional(), metadata: z.record(z.string(), z.unknown()).optional() }).strict(),
+  employees: z.object({ ...named, costRate: decimal.optional(), saleRate: decimal.optional(), defaultIgicRate: rate.optional() }).strict(),
+  supplements: z.object({ ...named, employeeId: z.uuid().nullable().optional(), amount: decimal.optional(), addPerHour: decimal.optional() }).strict(),
+  travels: z.object({ ...named, description: text.optional(), unit: text.min(1).optional(), costUnitPrice: decimal.optional(), saleUnitPrice: decimal.optional(), igicRate: rate.optional() }).strict(),
+  "text-templates": z.object({ title: text.min(1), body: text, alwaysInclude: z.boolean().optional(), active: z.boolean().optional() }).strict(),
+  suppliers: z.object({ ...named, taxId: text.optional() }).strict(),
+};
+export function catalogMutationSchema(kind: string, partial = false) {
+  const schema = schemas[kind as keyof typeof schemas];
+  return schema ? (partial ? schema.partial() : schema) : z.never();
+}
 
 const optionalCatalogText = z.string().trim().max(500).optional();
 const optionalCatalogDecimal = z.string().trim().regex(/^-?\d+(?:[.,]\d+)?$/).optional();

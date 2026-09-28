@@ -29,6 +29,20 @@
       "when": 1790195151361,
       "tag": "0003_shocking_penance",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790282097770,
+      "tag": "0004_functional_closure",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790322622233,
+      "tag": "0005_supplement_scope",
+      "breakpoints": true
     }
   ]
 }

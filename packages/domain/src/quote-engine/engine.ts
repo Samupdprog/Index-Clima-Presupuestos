@@ -27,6 +27,7 @@ export interface QuoteLineInput {
   saleRule: { type: SaleRuleType; value: Decimal.Value; baseUnitPrice?: Decimal.Value };
   directUnitCost?: Decimal.Value;
   supplierUnitPrice?: Decimal.Value;
+  saleBaseMode?: "net_cost" | "supplier_list_price";
   supplierDiscounts?: SupplierDiscount[];
   laborEntries?: LaborEntry[];
 }
@@ -56,6 +57,10 @@ export interface CalculatedLine {
   marginOnSalePct: Money | null;
   igic: Money;
   finalSaleWithTax: Money;
+  costUnit: Money;
+  saleUnit: Money;
+  saleUnitWithTax: Money;
+  effectiveSupplierDiscount: Money;
 }
 
 export interface QuoteCalculation {
@@ -73,10 +78,36 @@ export interface QuoteCalculation {
 }
 
 export function applyConsecutiveDiscounts(value: Decimal.Value, discounts: SupplierDiscount[] = []): Money {
-  return discounts.reduce(
-    (current, discount) => current.times(new Decimal(100).minus(discount.percentage).div(100)),
-    money(value),
-  );
+  return nonNegative(value, "supplier_price").times(supplierDiscountMultiplier(discounts));
+}
+
+export class PricingValidationError extends Error {
+  constructor(public readonly code: string) { super(code); this.name = "PricingValidationError"; }
+}
+
+function finite(value: Decimal.Value, field: string): Money {
+  let result: Money;
+  try { result = money(value); } catch { throw new PricingValidationError(`invalid_${field}`); }
+  if (!result.isFinite()) throw new PricingValidationError(`invalid_${field}`);
+  return result;
+}
+
+function nonNegative(value: Decimal.Value, field: string): Money {
+  const result = finite(value, field);
+  if (result.lt(0)) throw new PricingValidationError(`invalid_${field}`);
+  return result;
+}
+
+export function supplierDiscountMultiplier(discounts: SupplierDiscount[] = []): Money {
+  return discounts.reduce((multiplier, discount) => {
+    const percentage = nonNegative(discount.percentage, "supplier_discount");
+    if (percentage.gt(100)) throw new PricingValidationError("invalid_supplier_discount");
+    return multiplier.times(money(1).minus(percentage.div(100)));
+  }, money(1));
+}
+
+export function effectiveSupplierDiscountPct(discounts: SupplierDiscount[] = []): Money {
+  return money(1).minus(supplierDiscountMultiplier(discounts)).times(100);
 }
 
 export function calculateCost(line: QuoteLineInput): Money {
@@ -96,7 +127,12 @@ export function calculateCost(line: QuoteLineInput): Money {
 export function calculateBaseSale(line: QuoteLineInput): Money {
   const quantity = money(line.quantity);
   const value = money(line.saleRule.value);
-  const baseUnitPrice = money(line.saleRule.baseUnitPrice ?? 0);
+  const automatic = line.saleRule.type === "add_euros_per_unit" || line.saleRule.type === "add_percentage";
+  const baseUnitPrice = automatic
+    ? line.saleBaseMode !== undefined || line.saleRule.baseUnitPrice === undefined
+      ? resolveSaleBaseUnitPrice(line.saleBaseMode ?? "net_cost", line.directUnitCost, line.supplierUnitPrice, line.supplierDiscounts)
+      : nonNegative(line.saleRule.baseUnitPrice, "sale_base")
+    : money(0);
   switch (line.saleRule.type) {
     case "fixed_line_total":
       return value;
@@ -118,9 +154,19 @@ function calculateSaleFromLabor(line: QuoteLineInput): Money | undefined {
 }
 
 export function calculateLine(line: QuoteLineInput): CalculatedLine {
+  nonNegative(line.quantity, "quantity");
+  nonNegative(line.igicRate ?? 0, "igic_rate");
+  finite(line.saleRule.value, "sale_rule_value");
+  supplierDiscountMultiplier(line.supplierDiscounts);
+  if (line.directUnitCost !== undefined) nonNegative(line.directUnitCost, "unit_cost");
+  if (line.supplierUnitPrice !== undefined) nonNegative(line.supplierUnitPrice, "supplier_price");
+  for (const entry of line.laborEntries ?? []) {
+    nonNegative(entry.hours, "labor_hours"); nonNegative(entry.costRate, "labor_cost"); nonNegative(entry.saleRate, "labor_sale");
+  }
   const cost = calculateCost(line);
   const baseSale = calculateSaleFromLabor(line) ?? calculateBaseSale(line);
   const sale = baseSale.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  if (sale.lt(0)) throw new PricingValidationError("negative_sale");
   const roundedCost = cost.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   const profit = sale.minus(roundedCost);
   const igic = calculateIgic(sale, line.igicRate ?? 0);
@@ -139,6 +185,10 @@ export function calculateLine(line: QuoteLineInput): CalculatedLine {
     marginOnSalePct: sale.isZero() ? null : profit.div(sale).times(100),
     igic,
     finalSaleWithTax: sale.plus(igic),
+    costUnit: money(line.quantity).isZero() ? money(0) : roundedCost.div(line.quantity),
+    saleUnit: money(line.quantity).isZero() ? money(0) : sale.div(line.quantity),
+    saleUnitWithTax: money(line.quantity).isZero() ? money(0) : sale.plus(igic).div(line.quantity),
+    effectiveSupplierDiscount: effectiveSupplierDiscountPct(line.supplierDiscounts),
   };
 }
 
@@ -164,19 +214,26 @@ export function allocateProportionalAdjustment(
   amount: Decimal.Value,
   lines: Pick<CalculatedLine, "id" | "sale" | "type" | "eligibleForPriceAllocation">[],
 ): Map<string, Money> {
-  const eligible = lines.filter((line) => line.type !== "adjustment" && line.type !== "title" && line.sale.gt(0) && line.eligibleForPriceAllocation !== false);
+  const eligible = lines.filter((line) => line.type !== "adjustment" && line.type !== "title" && line.sale.gte(0) && line.eligibleForPriceAllocation !== false);
   const total = eligible.reduce((sum, line) => sum.plus(line.sale), money(0));
   const result = new Map<string, Money>();
-  if (total.isZero()) return result;
-  const target = money(amount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-  let allocated = money(0);
-  eligible.forEach((line, index) => {
-    const value = index === eligible.length - 1
-      ? target.minus(allocated)
-      : target.times(line.sale).div(total).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-    result.set(line.id, value);
-    allocated = allocated.plus(value);
+  const target = finite(amount, "adjustment").toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  if (!eligible.length) {
+    if (!target.isZero()) throw new PricingValidationError("no_eligible_adjustment_lines");
+    return result;
+  }
+  const sign = target.isNegative() ? -1 : 1;
+  const cents = target.abs().times(100);
+  const shares = eligible.map((line) => {
+    const exact = total.isZero() ? cents.div(eligible.length) : cents.times(line.sale).div(total);
+    return { id: line.id, cents: exact.floor(), remainder: exact.minus(exact.floor()) };
   });
+  let remaining = cents.minus(shares.reduce((sum, share) => sum.plus(share.cents), money(0)));
+  shares.sort((a, b) => b.remainder.comparedTo(a.remainder) || a.id.localeCompare(b.id, "en"));
+  for (const share of shares) {
+    if (remaining.gt(0)) { share.cents = share.cents.plus(1); remaining = remaining.minus(1); }
+    result.set(share.id, share.cents.times(sign).div(100));
+  }
   return result;
 }
 
@@ -191,17 +248,20 @@ export function applyLineAdjustment(line: CalculatedLine, adjustment: PriceAdjus
 
 function withSale(line: CalculatedLine, sale: Money, adjustment: Money): CalculatedLine {
   const roundedSale = sale.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  if (roundedSale.lt(0)) throw new PricingValidationError("negative_sale_after_adjustment");
   const profit = roundedSale.minus(line.cost);
   const igic = calculateIgic(roundedSale, line.igicRate);
   return {
     ...line,
     sale: roundedSale,
-    adjustment: line.adjustment.plus(adjustment),
+    adjustment: line.adjustment.plus(roundedSale.minus(line.sale)),
     profit,
     profitOnCostPct: calculateProfitOnCostPct(roundedSale, line.cost),
     marginOnSalePct: calculateMarginOnSalePct(roundedSale, line.cost),
     igic,
     finalSaleWithTax: roundedSale.plus(igic),
+    saleUnit: line.quantity.isZero() ? money(0) : roundedSale.div(line.quantity),
+    saleUnitWithTax: line.quantity.isZero() ? money(0) : roundedSale.plus(igic).div(line.quantity),
   };
 }
 
@@ -245,6 +305,7 @@ export function calculateQuote(
 ): QuoteCalculation {
   let calculated = lines.map(calculateLine);
   for (const adjustment of adjustments) {
+    validatePriceAdjustment(calculated, adjustment);
     if (adjustment.scope === "line") {
       calculated = calculated.map((line) => line.id === adjustment.targetLineIds?.[0] ? applyLineAdjustment(line, adjustment) : line);
     } else if (adjustment.scope === "selection") {
@@ -274,7 +335,45 @@ export function calculateQuote(
 }
 
 export function resolveSaleBaseUnitPrice(mode: "net_cost" | "supplier_list_price", directUnitCost: Decimal.Value | null | undefined, supplierUnitPrice: Decimal.Value | null | undefined, discounts: SupplierDiscount[] = []): Money {
-  if (mode === "supplier_list_price") return money(supplierUnitPrice ?? 0);
-  if (directUnitCost !== null && directUnitCost !== undefined) return money(directUnitCost);
-  return applyConsecutiveDiscounts(supplierUnitPrice ?? 0, discounts);
+  const multiplier = supplierDiscountMultiplier(discounts);
+  if (mode === "supplier_list_price") {
+    if (supplierUnitPrice !== null && supplierUnitPrice !== undefined) return nonNegative(supplierUnitPrice, "supplier_price");
+    if (directUnitCost !== null && directUnitCost !== undefined && !multiplier.isZero()) return nonNegative(directUnitCost, "unit_cost").div(multiplier);
+    throw new PricingValidationError("pricing_data_required");
+  }
+  if (directUnitCost !== null && directUnitCost !== undefined) return nonNegative(directUnitCost, "unit_cost");
+  if (supplierUnitPrice !== null && supplierUnitPrice !== undefined) return applyConsecutiveDiscounts(supplierUnitPrice, discounts);
+  throw new PricingValidationError("pricing_data_required");
+}
+
+export function validatePriceAdjustment(lines: CalculatedLine[], adjustment: PriceAdjustment): void {
+  const value = finite(adjustment.value, "adjustment");
+  if (adjustment.mode === "target_total" && value.lt(0)) throw new PricingValidationError("invalid_target_total");
+  const ids = adjustment.targetLineIds ?? [];
+  if (new Set(ids).size !== ids.length) throw new PricingValidationError("duplicate_adjustment_targets");
+  if (adjustment.scope === "line" && ids.length !== 1) throw new PricingValidationError("adjustment_requires_one_line");
+  if (adjustment.scope === "selection" && !ids.length) throw new PricingValidationError("adjustment_requires_selection");
+  if (adjustment.scope === "quote" && ids.length) throw new PricingValidationError("quote_adjustment_has_targets");
+  for (const id of ids) {
+    const line = lines.find((item) => item.id === id);
+    if (!line) throw new PricingValidationError("adjustment_target_not_found");
+    if (line.type === "title" || line.type === "adjustment" || !line.eligibleForPriceAllocation) throw new PricingValidationError("ineligible_adjustment_target");
+  }
+}
+
+export function serializeQuoteCalculation(calculation: QuoteCalculation) {
+  return {
+    subtotal: calculation.subtotal.toFixed(2), igic: calculation.igic.toFixed(2), total: calculation.total.toFixed(2),
+    cost: calculation.cost.toFixed(2), profit: calculation.profit.toFixed(2),
+    saleWithoutTax: calculation.saleWithoutTax.toFixed(2), taxTotal: calculation.taxTotal.toFixed(2), saleWithTax: calculation.saleWithTax.toFixed(2),
+    profitOnCostPct: calculation.profitOnCostPct?.toFixed(6) ?? null, marginOnSalePct: calculation.marginOnSalePct?.toFixed(6) ?? null,
+    lines: calculation.lines.map((line) => ({
+      id: line.id, quoteLineId: line.id, type: line.type, quantity: line.quantity.toString(), igicRate: line.igicRate.toString(),
+      cost: line.cost.toFixed(2), sale: line.sale.toFixed(2), baseSale: line.baseSale.toFixed(2), adjustment: line.adjustment.toFixed(2),
+      profit: line.profit.toFixed(2), igic: line.igic.toFixed(2), finalSaleWithTax: line.finalSaleWithTax.toFixed(2),
+      profitOnCostPct: line.profitOnCostPct?.toFixed(6) ?? null, marginOnSalePct: line.marginOnSalePct?.toFixed(6) ?? null,
+      costUnit: line.costUnit.toFixed(6), saleUnit: line.saleUnit.toFixed(6), saleUnitWithTax: line.saleUnitWithTax.toFixed(6),
+      effectiveSupplierDiscount: line.effectiveSupplierDiscount.toFixed(6),
+    })),
+  };
 }

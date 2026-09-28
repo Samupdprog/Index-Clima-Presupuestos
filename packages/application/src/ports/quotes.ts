@@ -15,6 +15,7 @@ export interface QuoteRecord {
   holdedEstimateId?: string | null;
   calculation?: unknown;
   lines: unknown[];
+  priceAdjustments?: unknown[];
 }
 
 export interface CreateQuoteCommand {

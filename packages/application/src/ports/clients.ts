@@ -15,6 +15,9 @@ export interface ClientRecord {
   syncError: string | null;
   revision: number;
   updatedAt?: Date;
+  deletedAt?: Date | null;
+  deletionSource?: string | null;
+  lastSyncedRevision?: number | null;
 }
 
 export interface CreateClientCommand {
@@ -49,6 +52,7 @@ export interface LinkHoldedInput {
   holdedContactId: string;
   holdedSnapshot: Record<string, unknown>;
   holdedPayloadHash: string;
+  expectedRevision?: number;
 }
 
 /** Refresco desde Holded: Holded manda sobre los campos sincronizados. */
@@ -63,6 +67,7 @@ export interface ApplyHoldedSnapshotInput {
   address: string | null;
   holdedSnapshot: Record<string, unknown>;
   holdedPayloadHash: string;
+  expectedRevision?: number;
 }
 
 export interface ClientRepository {
@@ -76,6 +81,8 @@ export interface ClientRepository {
   linkHolded(input: LinkHoldedInput): Promise<ClientRecord>;
   applyHoldedSnapshot(input: ApplyHoldedSnapshotInput): Promise<ClientRecord>;
   markSyncError(installationId: string, id: string, message: string): Promise<void>;
+  archive(input: { installationId: string; id: string; expectedRevision: number; source: "local" | "holded" }): Promise<ClientRecord>;
+  withSyncLock<T>(installationId: string, id: string, work: () => Promise<T>): Promise<T>;
 }
 
 // -------------------------------------------------------------------------
@@ -105,6 +112,8 @@ export interface HoldedLocalContactInput {
 }
 
 export interface HoldedContactGateway {
+  listContactsPage(cursor?: string): Promise<{ items: HoldedClientContact[]; cursor: string | null; hasMore: boolean }>;
+  deleteContact(holdedContactId: string): Promise<void>;
   searchContacts(query: string): Promise<HoldedClientContact[]>;
   getContact(holdedContactId: string): Promise<HoldedClientContact | null>;
   /** Crea el contacto en Holded y devuelve el estado canónico. */
