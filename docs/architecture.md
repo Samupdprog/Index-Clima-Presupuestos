@@ -61,6 +61,10 @@ Valida contratos de tools y llama a la API interna. No dispone de acceso SQL ni 
 
 Así toda mutación humana o de IA cruza la misma autoridad.
 
+### `apps/oauth`
+
+Authorization Server OAuth 2.1 de la instalación (oidc-provider), para ChatGPT y Claude. Emite tokens JWT con audiencia igual al MCP. Solo persiste artefactos OAuth (`oauth_artifacts`) a través de `packages/db`. No conoce presupuestos, clientes ni Holded. Ver ADR-006.
+
 ### `apps/worker`
 
 Ejecutor interno de trabajos persistidos:
@@ -87,7 +91,7 @@ contracts      <- application <- api
 contracts                   <- mcp
 db             -> application ports
 holded         -> application ports
-auth           -> api/mcp adapters
+auth           -> mcp, oauth (scopes compartidos)
 ```
 
 Las dependencias externas apuntan hacia el núcleo, no al revés.

@@ -21,6 +21,7 @@ apps/
 ├── web       Next.js; capa visual reemplazable
 ├── api       HTTP; única entrada para operaciones de usuario/IA
 ├── mcp       MCP remoto; traduce tools a comandos de la API
+├── oauth     Authorization Server OAuth 2.1 (ChatGPT/Claude)
 └── worker    sincronización, webhooks, reintentos y trabajos
 
 packages/
@@ -29,7 +30,7 @@ packages/
 ├── db            PostgreSQL + Drizzle + migraciones
 ├── holded        adaptador Holded
 ├── contracts     contratos y validación compartida
-└── auth          identidad, permisos y scopes
+└── auth          scopes compartidos por MCP y OAuth
 ```
 
 Regla central:
@@ -84,6 +85,7 @@ npm run dev:local:api       # 127.0.0.1:${API_PORT}
 npm run dev:local:web       # localhost:${WEB_PORT}
 npm run dev:local:mcp       # 127.0.0.1:${MCP_PORT}
 npm run dev:local:worker    # opcional: reconciliación periódica de contactos
+npm run dev:local:oauth     # Authorization Server OAuth (issuer http://localhost:${OAUTH_PORT})
 ```
 
 Los scripts `npm run dev:web|dev:api|dev:mcp|dev:worker` siguen disponibles si prefieres exportar las variables tú mismo.
@@ -149,5 +151,6 @@ Generador operativo para Index Clima:
 - Presupuestos con materiales, mano de obra, desplazamientos y otros conceptos; reglas de precio, descuentos encadenados, IGIC y ajustes posteriores con preview. La autoridad económica es el dominio.
 - Revisiones con bloqueo optimista, revisión previa a la exportación, PDF y exportación idempotente al mismo Estimate de Holded.
 - MCP para IA con scopes, que opera el Generador y consulta en solo lectura los Estimates existentes en Holded ([SPEC-011](docs/specs/011-mcp-holded-estimates.md)).
+- Conexión de ChatGPT y Claude mediante OAuth 2.1 con Authorization Server integrado ([guía](docs/operations/chatgpt-mcp-oauth.md), [SPEC-012](docs/specs/012-mcp-oauth.md)).
 
 El desarrollo funcional continúa mediante especificaciones SDD pequeñas y verificables en `docs/specs/`.

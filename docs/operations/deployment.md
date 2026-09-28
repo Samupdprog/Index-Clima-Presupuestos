@@ -23,8 +23,9 @@ Como alternativa, ejecuta `cp .env.example .env` y sustituye cada `CHANGE_ME` a 
 Revisa `.env`:
 
 - `INSTALLATION_NAME` y `APP_ACCESS_USERNAME`.
-- `FEATURE_MCP` y `COMPOSE_PROFILES=mcp` para publicar el MCP. Si no quieres IA, pon `FEATURE_MCP=false` y deja `COMPOSE_PROFILES` vacío.
-- `MCP_SCOPES`. Para una IA que solo consulte: `quotes:read,clients:read,holded:read`.
+- `FEATURE_MCP`, `MCP_AUTH_MODE=oauth` y `COMPOSE_PROFILES=mcp,oauth` para publicar el MCP con OAuth (ChatGPT y Claude). Si no quieres IA, pon `FEATURE_MCP=false` y deja `COMPOSE_PROFILES` vacío.
+- `MCP_SCOPES`: techo de permisos. Para una IA que solo consulte: `quotes:read,clients:read,holded:read`.
+- `AUTH_OWNER_USERNAME`: la contraseña `AUTH_OWNER_PASSWORD` es la que se usa para autorizar ChatGPT y Claude.
 - `TRAEFIK_NETWORK`, la red Docker del Traefik existente (por defecto `app-net`).
 
 Si el servidor todavía no tiene Traefik, instálalo una sola vez para todo el servidor:
@@ -49,14 +50,16 @@ Comprueba y despliega:
 
 1. `postgres` arranca y espera a estar healthy.
 2. `migrate` (one-shot) aplica las migraciones y crea o actualiza la fila `installations` con `INSTALLATION_ID`. Es idempotente y no inserta datos demo.
-3. `api` y `worker` arrancan solo si `migrate` termina con éxito. Después arrancan `web` y `mcp`.
+3. `api`, `worker` y `oauth` arrancan solo si `migrate` termina con éxito. Después arrancan `web` y `mcp`.
 
 ## Verificación
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 curl -fsS https://presupuestos.example.com/api/health
-curl -fsS https://mcp.example.com/health     # {"status":"ok","service":"mcp","toolsEnabled":true}
+curl -fsS https://mcp.example.com/health     # {"status":"ok","service":"mcp","toolsEnabled":true,"authMode":"oauth"}
+curl -fsS https://mcp.example.com/.well-known/oauth-protected-resource/mcp
+curl -fsS https://mcp.example.com/.well-known/oauth-authorization-server
 ```
 
 Abre `https://APP_HOST`. El navegador pedirá `APP_ACCESS_USERNAME` y `APP_ACCESS_PASSWORD`, que puedes consultar con `grep ^APP_ACCESS_PASSWORD= .env`.
@@ -71,8 +74,8 @@ No cambies `HOLDED_ENCRYPTION_KEY` después de guardar la clave: dejaría de pod
 
 ## Cliente MCP
 
-- URL: el valor de `MCP_PUBLIC_URL` (por ejemplo `https://mcp.example.com/mcp`, transporte Streamable HTTP).
-- Cabecera: `Authorization: Bearer <MCP_AUTH_TOKEN>` (`grep ^MCP_AUTH_TOKEN= .env`).
+- ChatGPT y Claude: URL `MCP_PUBLIC_URL` con autenticación OAuth. Sigue [chatgpt-mcp-oauth.md](chatgpt-mcp-oauth.md).
+- Clientes propios sin OAuth: `MCP_AUTH_MODE=bearer` (o `hybrid` temporalmente) con la cabecera `Authorization: Bearer <MCP_AUTH_TOKEN>`.
 - La IA descubre las herramientas y la guía `generator://guide`. Con `holded:read` puede consultar los Estimates existentes; enviar a Holded requiere `quotes:write` y `holded:write`.
 
 Prueba completa del MCP. Crea un presupuesto `TEST`, lo archiva al terminar y solo lee Holded:
@@ -99,7 +102,7 @@ Las migraciones pendientes se aplican solas antes de arrancar la API. También s
 
 ## Otro reverse proxy
 
-Sin Traefik, usa solo `docker-compose.yml` y apunta tu proxy HTTPS (Nginx, Caddy…) a `127.0.0.1:${WEB_PORT}` y `127.0.0.1:${MCP_PORT}`. En este modo define igualmente `APP_ACCESS_PASSWORD`, porque la web no tiene otra autenticación. Mantén `MCP_PUBLIC_URL` igual a la URL pública exacta: su host es el único `Host` público que acepta el MCP.
+Sin Traefik, usa solo `docker-compose.yml` y apunta tu proxy HTTPS (Nginx, Caddy…) a `127.0.0.1:${WEB_PORT}` y `127.0.0.1:${MCP_PORT}`. En el host del MCP, envía `/oauth/*`, `/.well-known/oauth-authorization-server` y `/.well-known/openid-configuration` a `127.0.0.1:${OAUTH_PORT}` y conserva `X-Forwarded-Proto`/`Host`. En este modo define igualmente `APP_ACCESS_PASSWORD`, porque la web no tiene otra autenticación. Mantén `MCP_PUBLIC_URL` igual a la URL pública exacta: su host es el único `Host` público que acepta el MCP.
 
 ## Logs
 
