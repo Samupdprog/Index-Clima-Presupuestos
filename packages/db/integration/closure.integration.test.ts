@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { createDb, createQuoteRepository, createQuoteWorkflowRepository, createClientRepository, createDataResetRepository, installations, auditEvents, withAuditActor } from "../src/index.js";
+import { createDb, createQuoteRepository, createQuoteWorkflowRepository, createClientRepository, createDataResetRepository, createQuoteExportRepository, installations, auditEvents, withAuditActor } from "../src/index.js";
 import { previewPriceAdjustment, previewQuoteLine } from "@quotes/application";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -57,6 +57,14 @@ describe("functional closure against PostgreSQL", () => {
     const quote = (await quotes.getQuoteById(installationId, quoteId))!;
     const preview = await previewQuoteLine(quotes)(installationId, quoteId, { type: "createQuoteLine", lineType: "material", expectedRevision: quote.revision, line: { description: "TEST", unit: "ud", quantity: "2", supplierUnitPrice: "1000", igicRate: "7", saleRule: "add_percentage", saleRuleValue: "10", saleBaseMode: "supplier_list_price" }, discounts: [{ percentage: "40" }, { percentage: "10" }], laborEntries: [] });
     expect(preview.sale.toString()).toBe("2200"); expect(preview.cost.toString()).toBe("1080");
+  });
+  it("links remote Holded estimates to local quotes only within the installation", async () => {
+    const estimateId = randomUUID().replace(/-/g, "").slice(0, 24);
+    await createQuoteExportRepository(db).recordId(installationId, quoteId, estimateId);
+    const saved = (await quotes.getQuoteById(installationId, quoteId))!;
+    expect(await quotes.findByHoldedEstimateIds(installationId, [estimateId, "f".repeat(24)])).toEqual([{ quoteId, reference: saved.reference, holdedEstimateId: estimateId }]);
+    expect(await quotes.findByHoldedEstimateIds(otherId, [estimateId])).toEqual([]);
+    expect(await quotes.findByHoldedEstimateIds(installationId, [])).toEqual([]);
   });
   it("reset preserves installation/config and does not affect another installation", async () => {
     const other = await clients.create({ installationId: otherId, name: "TEST other" });
