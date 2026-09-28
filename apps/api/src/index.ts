@@ -19,7 +19,11 @@ import {
   createQuote,
   duplicateQuote,
   getClient,
+  getHoldedEstimate,
   getQuote,
+  listHoldedEstimates,
+  searchHoldedEstimates,
+  type HoldedEstimateQueryDeps,
   getQuoteReview,
   previewPriceAdjustment,
   previewQuoteLine,
@@ -44,6 +48,9 @@ import {
   catalogMutationSchema,
   materialImportRequestSchema,
   previewPriceAdjustmentRequestSchema,
+  holdedIdSchema,
+  listHoldedEstimatesQuerySchema,
+  searchHoldedEstimatesQuerySchema,
 } from "@quotes/contracts";
 import {
   createClientRepository,
@@ -64,6 +71,8 @@ import {
 import { createHoldedClient, HoldedApiError, maskApiKey, type HoldedHealthResult } from "@quotes/holded";
 import { createHoldedContactGateway } from "./holded-gateway.js";
 import { createHoldedEstimateGateway } from "./holded-estimate-gateway.js";
+import { createHoldedEstimateReader } from "./holded-estimate-reader.js";
+import { holdedReadErrorResponse } from "./holded-read-errors.js";
 import { authenticateService, allowedAiRequest, dataResetAllowed } from "./access.js";
 import { verifyHoldedWebhook } from "./webhooks.js";
 
@@ -309,6 +318,31 @@ async function buildHoldedGateway(): Promise<HoldedContactGateway | null> {
   return createHoldedContactGateway(newHoldedClient(resolvedKey));
 }
 
+/** Lectura de Estimates remotos: null si Holded no está activo o no hay clave. */
+async function buildHoldedEstimateQueryDeps(): Promise<HoldedEstimateQueryDeps | null> {
+  const resolvedKey = getConfiguredHoldedApiKey(await readInstallationConfig());
+  if (process.env.FEATURE_HOLDED !== "true" || !resolvedKey || !quotes) return null;
+  return { reader: createHoldedEstimateReader(newHoldedClient(resolvedKey)), links: quotes };
+}
+
+function mapHoldedReadError(res: ServerResponse, error: unknown) {
+  const mapped = holdedReadErrorResponse(error);
+  if (!mapped) return mapError(res, error);
+  if (mapped.body.retryAfterSeconds !== undefined) res.setHeader("retry-after", String(mapped.body.retryAfterSeconds));
+  return sendJson(res, mapped.status, mapped.body);
+}
+
+async function readHoldedEstimates(res: ServerResponse, read: (deps: HoldedEstimateQueryDeps) => Promise<unknown>) {
+  const deps = await buildHoldedEstimateQueryDeps();
+  if (!deps) return sendJson(res, 503, { error: "holded_not_configured" });
+  try {
+    const result = await read(deps);
+    return result === null ? sendJson(res, 404, { error: "holded_estimate_not_found" }) : sendJson(res, 200, result);
+  } catch (error) {
+    return mapHoldedReadError(res, error);
+  }
+}
+
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
@@ -441,6 +475,22 @@ const server = createServer(async (req, res) => {
       const parsed = revisionGuardSchema.safeParse(body);
       if (!parsed.success) return sendJson(res, 400, { error: "invalid_input" });
       return sendJson(res, 200, await deleteClientWithHolded({ clients: clients!, holded: await buildHoldedGateway() })({ installationId: installationId!, id: path[1]!, ...parsed.data, deleteFromHolded: body.deleteFromHolded === true }));
+    }
+    // Solo lectura de Estimates existentes; escribir sigue siendo exclusivo de POST /quotes/:id/holded.
+    if (path[0] === "holded" && path[1] === "estimates" && path.length === 2 && req.method === "GET") {
+      const parsed = listHoldedEstimatesQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+      if (!parsed.success) return sendJson(res, 400, { error: "invalid_input", details: parsed.error.issues });
+      return readHoldedEstimates(res, (deps) => listHoldedEstimates(deps)(installationId!, parsed.data));
+    }
+    if (path[0] === "holded" && path[1] === "estimates" && path[2] === "search" && path.length === 3 && req.method === "GET") {
+      const parsed = searchHoldedEstimatesQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+      if (!parsed.success) return sendJson(res, 400, { error: "invalid_input", details: parsed.error.issues });
+      return readHoldedEstimates(res, (deps) => searchHoldedEstimates(deps)(installationId!, parsed.data));
+    }
+    if (path[0] === "holded" && path[1] === "estimates" && path.length === 3 && req.method === "GET") {
+      const parsed = holdedIdSchema.safeParse(path[2]);
+      if (!parsed.success) return sendJson(res, 400, { error: "invalid_input" });
+      return readHoldedEstimates(res, (deps) => getHoldedEstimate(deps)(installationId!, parsed.data));
     }
     if (path[0] === "holded" && path[1] === "taxes" && path.length === 2 && req.method === "GET") {
       const config = await readInstallationConfig();
