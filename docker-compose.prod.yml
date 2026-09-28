@@ -1,5 +1,8 @@
 services:
   web:
+    environment:
+      APP_ACCESS_USERNAME: ${APP_ACCESS_USERNAME:-index-clima}
+      APP_ACCESS_PASSWORD: ${APP_ACCESS_PASSWORD:?APP_ACCESS_PASSWORD must be set for public deployment}
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK}"

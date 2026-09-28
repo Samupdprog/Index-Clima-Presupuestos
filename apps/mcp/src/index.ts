@@ -1,52 +1,20 @@
-import { createMcpExpressApp } from "@modelcontextprotocol/express";
-import { toNodeHandler } from "@modelcontextprotocol/node";
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { createMcpApplication } from "./server.js";
 
-const host = process.env.HOST ?? "0.0.0.0";
+const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? "4001");
-const publicHost = process.env.MCP_HOST ?? "localhost";
-
-const handler = createMcpHandler(() => {
-  // En SPECs futuras se registrarán tools.
-  // Sus handlers llamarán al cliente interno de la API, nunca a SQL.
-  return new McpServer({
-    name: "generador-de-presupuestos",
-    version: "0.1.0"
-  });
-});
-
-const app = createMcpExpressApp({
+const application = createMcpApplication({
+  enabled: process.env.FEATURE_MCP === "true",
   host,
-  allowedHosts: [publicHost, "localhost", "127.0.0.1", "mcp"],
-  allowedOrigins: [publicHost, "localhost", "127.0.0.1"]
+  publicUrl: process.env.MCP_PUBLIC_URL ?? `http://${process.env.MCP_HOST ?? "localhost"}:${port}/mcp`,
+  installationId: process.env.INSTALLATION_ID ?? "",
+  apiUrl: process.env.INTERNAL_API_URL ?? "http://api:4000",
+  serviceToken: process.env.INTERNAL_SERVICE_TOKEN ?? "",
+  ...(process.env.MCP_AUTH_TOKEN ? { authToken: process.env.MCP_AUTH_TOKEN } : {}),
+  ...(process.env.MCP_SUBJECT ? { subject: process.env.MCP_SUBJECT } : {}),
+  ...(process.env.MCP_SCOPES ? { scopes: process.env.MCP_SCOPES } : {}),
 });
 
-const nodeHandler = toNodeHandler(handler);
-
-app.get("/health", (_req, res) => {
-  res.status(200).json({
-    status: "ok",
-    service: "mcp",
-    toolsEnabled: false,
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.all("/mcp", (req, res) => {
-  // Bearer/OAuth se añadirá delante de esta ruta antes de habilitar tools reales.
-  void nodeHandler(req, res, req.body);
-});
-
-const server = app.listen(port, host, () => {
-  console.log(`[mcp] listening on ${host}:${port}`);
-});
-
-async function stop() {
-  server.close(async () => {
-    await handler.close();
-    process.exit(0);
-  });
-}
-
-process.on("SIGTERM", () => void stop());
-process.on("SIGINT", () => void stop());
+const server = application.app.listen(port, host, () => console.log(`[mcp] listening on ${host}:${port}`));
+function stop() { server.close(() => { void application.close().finally(() => process.exit(0)); }); }
+process.on("SIGTERM", stop);
+process.on("SIGINT", stop);

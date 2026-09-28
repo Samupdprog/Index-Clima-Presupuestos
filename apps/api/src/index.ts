@@ -20,9 +20,17 @@ import {
   duplicateQuote,
   getClient,
   getQuote,
+  getQuoteReview,
+  previewPriceAdjustment,
+  previewQuoteLine,
   searchClientsWithHolded,
   searchQuotes,
   updateClientWithHolded,
+  deleteClientWithHolded,
+  syncClientWithHolded,
+  syncClientsWithHolded,
+  syncQuoteToHolded,
+  QuoteExportError,
   updateQuote,
 } from "@quotes/application";
 import {
@@ -34,8 +42,8 @@ import {
   updateClientRequestSchema,
   quoteCommandSchema,
   catalogMutationSchema,
-  catalogUpdateSchema,
   materialImportRequestSchema,
+  previewPriceAdjustmentRequestSchema,
 } from "@quotes/contracts";
 import {
   createClientRepository,
@@ -44,6 +52,10 @@ import {
   createQuoteWorkflowRepository,
   createCatalogRepository,
   createInstallationRepository,
+  createDataResetRepository,
+  createWebhookRepository,
+  createQuoteExportRepository,
+  withAuditActor,
   InstallationNotFoundError,
   QuoteNotFoundError,
   ReadOnlyQuoteError,
@@ -51,6 +63,9 @@ import {
 } from "@quotes/db";
 import { createHoldedClient, HoldedApiError, maskApiKey, type HoldedHealthResult } from "@quotes/holded";
 import { createHoldedContactGateway } from "./holded-gateway.js";
+import { createHoldedEstimateGateway } from "./holded-estimate-gateway.js";
+import { authenticateService, allowedAiRequest, dataResetAllowed } from "./access.js";
+import { verifyHoldedWebhook } from "./webhooks.js";
 
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? "4000");
@@ -134,6 +149,7 @@ async function getHoldedSettingsFromDatabase() {
 
 function getConfiguredHoldedApiKey(config: Record<string, unknown>) {
   const holded = getHoldedSettingsConfig(config);
+  if (holded.disconnected === true) return undefined;
   const encrypted = typeof holded.apiKeyEncrypted === "string" ? holded.apiKeyEncrypted : undefined;
   if (encrypted) {
     try { return decryptHoldedSecret(encrypted); } catch { return undefined; }
@@ -232,6 +248,7 @@ async function buildHoldedSettingsPayload(forceHealth = false) {
     keyMasked: resolvedKey ? maskApiKey(resolvedKey) : null,
     checkIntervalMinutes: intervalMinutes,
     health,
+    taxMapping: holded.taxMapping ?? {},
   };
 }
 
@@ -244,11 +261,13 @@ async function updateHoldedSettings(payload: Record<string, unknown>) {
   // Desconexión EXPLÍCITA: sólo con removeApiKey === true se borra la clave.
   if (payload.removeApiKey === true) {
     delete nextHolded.apiKeyEncrypted;
+    nextHolded.disconnected = true;
   } else {
     const incomingKey = payload.apiKey;
     // Un campo vacío NO borra la clave (evita perderla al cambiar solo el intervalo).
     if (typeof incomingKey === "string" && incomingKey.trim().length > 0) {
       nextHolded.apiKeyEncrypted = encryptHoldedSecret(incomingKey.trim());
+      nextHolded.disconnected = false;
     }
   }
 
@@ -256,6 +275,11 @@ async function updateHoldedSettings(payload: Record<string, unknown>) {
     nextHolded.checkIntervalMinutes = normalizeCheckIntervalMinutes(payload.checkIntervalMinutes);
   }
 
+  if (payload.taxMapping && typeof payload.taxMapping === "object") {
+    const entries = Object.entries(payload.taxMapping as Record<string, unknown>);
+    if (entries.some(([rate, key]) => !["0", "3", "7", "15"].includes(rate) || typeof key !== "string" || key.length > 100)) throw new Error("invalid_json");
+    nextHolded.taxMapping = Object.fromEntries(entries.filter(([, key]) => key));
+  }
   const nextConfig = { ...currentConfig, holded: nextHolded };
   await writeInstallationConfig(nextConfig);
 
@@ -293,7 +317,12 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
 function readBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let data = "";
-    req.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+    let bytes = 0;
+    req.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > 2_000_000) { reject(new Error("payload_too_large")); return; }
+      data += chunk.toString();
+    });
     req.on("end", () => {
       try { resolve(data ? JSON.parse(data) : {}); } catch { reject(new Error("invalid_json")); }
     });
@@ -310,18 +339,38 @@ function requireContext(res: ServerResponse) {
 }
 
 function mapError(res: ServerResponse, error: unknown) {
+  if (error instanceof QuoteExportError) return sendJson(res, error.code === "revision_conflict" ? 409 : error.code.endsWith("not_found") ? 404 : 422, { error: error.code, details: error.details });
+  if (error instanceof Error && error.name === "PricingValidationError") return sendJson(res, error.message === "revision_conflict" ? 409 : error.message.endsWith("not_found") ? 404 : 422, { error: error.message });
+  if (error instanceof Error && ["client_not_found", "revision_conflict", "holded_not_configured", "holded_delete_confirmation_required", "client_match_ambiguous", "holded_contact_creation_uncertain"].includes(error.message)) return sendJson(res, error.message === "revision_conflict" ? 409 : error.message === "client_not_found" ? 404 : 422, { error: error.message });
   if (error instanceof InstallationNotFoundError) return sendJson(res, 503, { error: "installation_not_found", message: "No existe la instalación configurada (INSTALLATION_ID). Ejecuta la inicialización de la base de datos (db:seed)." });
   if (error instanceof RevisionConflictError) return sendJson(res, 409, { error: "revision_conflict" });
   if (error instanceof QuoteNotFoundError) return sendJson(res, 404, { error: "quote_not_found" });
   if (error instanceof ReadOnlyQuoteError) return sendJson(res, 422, { error: "quote_read_only" });
   if (error instanceof Error && error.message === "invalid_json") return sendJson(res, 400, { error: "invalid_json" });
-  if (error instanceof HoldedApiError) return sendJson(res, 502, { error: "holded_sync_failed", details: { status: error.status } });
+  if (error instanceof Error && error.message === "payload_too_large") return sendJson(res, 413, { error: "payload_too_large" });
+  if (error instanceof HoldedApiError) return sendJson(res, 502, { error: "holded_sync_failed", details: { status: error.status, code: error.code, remote: error.responseBody } });
   if (error && typeof error === "object" && "code" in error && error.code === "23505") return sendJson(res, 409, { error: "conflict" });
-  console.error(error);
+  // Driver errors may contain row data or credentials: only log the error class.
+  console.error(JSON.stringify({ event: "api_error", type: error instanceof Error ? error.name : "unknown" }));
   return sendJson(res, 500, { error: "internal_error" });
 }
 
 const server = createServer(async (req, res) => {
+  if (req.method === "POST" && req.url === "/webhooks/holded") {
+    try {
+      if (!database || !installationId || !process.env.HOLDED_WEBHOOK_SECRET) return sendJson(res, 503, { error: "webhook_not_configured" });
+      const chunks: Buffer[] = []; let bytes = 0;
+      for await (const chunk of req) { bytes += chunk.length; if (bytes > 2_000_000) return sendJson(res, 413, { error: "payload_too_large" }); chunks.push(Buffer.from(chunk)); }
+      const raw = Buffer.concat(chunks);
+      if (!verifyHoldedWebhook(raw, String(req.headers["x-holded-webhook-signature"] ?? ""), process.env.HOLDED_WEBHOOK_SECRET)) return sendJson(res, 401, { error: "invalid_signature" });
+      if (process.env.HOLDED_ACCOUNT_ID && req.headers["x-holded-webhook-account-id"] !== process.env.HOLDED_ACCOUNT_ID) return sendJson(res, 403, { error: "wrong_account" });
+      const event = String(req.headers["x-holded-webhook-event"] ?? "");
+      const eventId = String(req.headers["x-holded-webhook-id"] ?? "");
+      const payload = JSON.parse(raw.toString("utf8")) as { id?: unknown };
+      if (!["contact.create", "contact.update", "contact.delete"].includes(event) || !eventId || eventId.length > 200 || typeof payload.id !== "string") return sendJson(res, 400, { error: "invalid_event" });
+      return sendJson(res, 202, await createWebhookRepository(database.db).receive(installationId, eventId, event, payload.id));
+    } catch { return sendJson(res, 400, { error: "invalid_webhook" }); }
+  }
   if (req.method === "GET" && req.url === "/health") {
     return sendJson(res, 200, {
       status: "ok",
@@ -330,11 +379,23 @@ const server = createServer(async (req, res) => {
     });
   }
 
-  if (!requireContext(res)) return;
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   const path = url.pathname.split("/").filter(Boolean);
+  const authentication = authenticateService(req.headers, process.env.INTERNAL_SERVICE_TOKEN, installationId ?? "");
+  if (authentication.error) return sendJson(res, authentication.status!, { error: authentication.error });
+  if (authentication.actor.actorType === "ai" && !allowedAiRequest(req.method ?? "GET", path, req.headers["x-mcp-scopes"])) return sendJson(res, 403, { error: "insufficient_scope" });
+  if (!requireContext(res)) return;
 
+  return withAuditActor(authentication.actor, async () => {
   try {
+    if (path[0] === "settings" && path[1] === "data-reset" && path.length === 2) {
+      if (req.method === "GET") return sendJson(res, 200, { allowed: process.env.ALLOW_DATA_RESET === "true" && authentication.actor.actorType === "user" });
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        if (!dataResetAllowed(process.env, authentication.actor.actorType, body)) return sendJson(res, 403, { error: "data_reset_forbidden" });
+        return sendJson(res, 200, await createDataResetRepository(database!.db).reset(installationId!));
+      }
+    }
     if (path[0] === "clients" && path.length === 1 && req.method === "POST") {
       const parsed = createClientRequestSchema.safeParse(await readBody(req));
       if (!parsed.success) return sendJson(res, 400, { error: "invalid_input", details: parsed.error.issues });
@@ -343,6 +404,10 @@ const server = createServer(async (req, res) => {
     }
     if (path[0] === "holded" && path.length === 2 && path[1] === "settings" && req.method === "GET") {
       return sendJson(res, 200, await buildHoldedSettingsPayload());
+    }
+    if (path[0] === "holded" && path.length === 2 && path[1] === "status" && req.method === "GET") {
+      const { featureEnabled, isConfigured, health } = await buildHoldedSettingsPayload();
+      return sendJson(res, 200, { featureEnabled, isConfigured, health });
     }
     if (path[0] === "holded" && path.length === 2 && path[1] === "settings" && req.method === "PATCH") {
       const body = await readBody(req);
@@ -360,6 +425,29 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { "content-type": "application/json", "x-holded-search": result.holded });
       return res.end(JSON.stringify(result.clients));
     }
+    if (path[0] === "clients" && path.length === 2 && path[1] === "sync" && req.method === "POST") {
+      const startedAt = new Date();
+      const result = await syncClientsWithHolded({ clients: clients!, holded: await buildHoldedGateway() })(installationId!);
+      await createWebhookRepository(database!.db).completeReconciliation(installationId!, startedAt);
+      return sendJson(res, 200, result);
+    }
+    if (path[0] === "clients" && path.length === 3 && path[2] === "sync" && req.method === "POST") {
+      const parsed = revisionGuardSchema.safeParse(await readBody(req));
+      if (!parsed.success) return sendJson(res, 400, { error: "invalid_input" });
+      return sendJson(res, 200, await syncClientWithHolded({ clients: clients!, holded: await buildHoldedGateway() })({ installationId: installationId!, id: path[1]!, ...parsed.data }));
+    }
+    if (path[0] === "clients" && path.length === 2 && req.method === "DELETE") {
+      const body = await readBody(req) as Record<string, unknown>;
+      const parsed = revisionGuardSchema.safeParse(body);
+      if (!parsed.success) return sendJson(res, 400, { error: "invalid_input" });
+      return sendJson(res, 200, await deleteClientWithHolded({ clients: clients!, holded: await buildHoldedGateway() })({ installationId: installationId!, id: path[1]!, ...parsed.data, deleteFromHolded: body.deleteFromHolded === true }));
+    }
+    if (path[0] === "holded" && path[1] === "taxes" && path.length === 2 && req.method === "GET") {
+      const config = await readInstallationConfig();
+      const key = getConfiguredHoldedApiKey(config);
+      if (!key || process.env.FEATURE_HOLDED !== "true") return sendJson(res, 503, { error: "holded_not_configured" });
+      return sendJson(res, 200, await newHoldedClient(key).listTaxes());
+    }
     if (path[0] === "clients" && path.length === 2 && req.method === "GET") {
       const result = await getClient(clients!)(installationId!, path[1]!);
       return result ? sendJson(res, 200, result) : sendJson(res, 404, { error: "client_not_found" });
@@ -376,7 +464,7 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, await getCatalog(catalog!, path[1] as typeof kinds[number])(installationId!, url.searchParams.get("employeeId") ?? undefined));
     }
     if (path[0] === "catalogs" && path.length === 2 && req.method === "POST") {
-      const parsed = catalogMutationSchema.safeParse(await readBody(req));
+      const parsed = catalogMutationSchema(path[1]!).safeParse(await readBody(req));
       if (!parsed.success) return sendJson(res, 400, { error: "invalid_input" });
       const data = { ...parsed.data, installationId: installationId! };
       const created = path[1] === "materials" ? await catalog!.createMaterial(data as never) : path[1] === "employees" ? await catalog!.createEmployee(data as never) : path[1] === "supplements" ? await catalog!.createSupplement(data as never) : path[1] === "travels" ? await catalog!.createTravel(data as never) : path[1] === "text-templates" ? await catalog!.createTextTemplate(data as never) : path[1] === "suppliers" ? await catalog!.createSupplier(data as never) : null;
@@ -394,17 +482,17 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 201, await catalog!.importMaterials(installationId!, rows));
     }
     if (path[0] === "catalogs" && path.length === 3 && req.method === "PATCH") {
-      const parsed = catalogUpdateSchema.safeParse(await readBody(req));
+      const parsed = catalogMutationSchema(path[1]!, true).safeParse(await readBody(req));
       if (!parsed.success) return sendJson(res, 400, { error: "invalid_input" });
       const kind = path[1];
       const id = path[2]!;
-      const updated = kind === "materials" ? await catalog!.updateMaterial(id, installationId!, parsed.data as never) : kind === "employees" ? await catalog!.updateEmployee(id, installationId!, parsed.data as never) : kind === "supplements" ? await catalog!.updateSupplement(id, parsed.data as never) : kind === "travels" ? await catalog!.updateTravel(id, installationId!, parsed.data as never) : kind === "text-templates" ? await catalog!.updateTextTemplate(id, installationId!, parsed.data as never) : kind === "suppliers" ? await catalog!.updateSupplier(id, installationId!, parsed.data as never) : [];
+      const updated = kind === "materials" ? await catalog!.updateMaterial(id, installationId!, parsed.data as never) : kind === "employees" ? await catalog!.updateEmployee(id, installationId!, parsed.data as never) : kind === "supplements" ? await catalog!.updateSupplement(id, installationId!, parsed.data as never) : kind === "travels" ? await catalog!.updateTravel(id, installationId!, parsed.data as never) : kind === "text-templates" ? await catalog!.updateTextTemplate(id, installationId!, parsed.data as never) : kind === "suppliers" ? await catalog!.updateSupplier(id, installationId!, parsed.data as never) : [];
       return updated[0] ? sendJson(res, 200, updated[0]) : sendJson(res, 404, { error: "catalog_not_found" });
     }
     if (path[0] === "catalogs" && path.length === 4 && path[3] === "archive" && req.method === "POST") {
       const kind = path[1];
       const id = path[2]!;
-      const updated = kind === "materials" ? await catalog!.updateMaterial(id, installationId!, { active: false }) : kind === "employees" ? await catalog!.updateEmployee(id, installationId!, { active: false }) : kind === "supplements" ? await catalog!.updateSupplement(id, { active: false }) : kind === "travels" ? await catalog!.updateTravel(id, installationId!, { active: false }) : kind === "text-templates" ? await catalog!.updateTextTemplate(id, installationId!, { active: false }) : kind === "suppliers" ? await catalog!.updateSupplier(id, installationId!, { active: false }) : [];
+      const updated = kind === "materials" ? await catalog!.updateMaterial(id, installationId!, { active: false }) : kind === "employees" ? await catalog!.updateEmployee(id, installationId!, { active: false }) : kind === "supplements" ? await catalog!.updateSupplement(id, installationId!, { active: false }) : kind === "travels" ? await catalog!.updateTravel(id, installationId!, { active: false }) : kind === "text-templates" ? await catalog!.updateTextTemplate(id, installationId!, { active: false }) : kind === "suppliers" ? await catalog!.updateSupplier(id, installationId!, { active: false }) : [];
       return updated[0] ? sendJson(res, 200, updated[0]) : sendJson(res, 404, { error: "catalog_not_found" });
     }
     if (path[0] === "quotes" && path.length === 1 && req.method === "POST") {
@@ -422,13 +510,42 @@ const server = createServer(async (req, res) => {
       return result ? sendJson(res, 200, result) : sendJson(res, 404, { error: "quote_not_found" });
     }
     if (path[0] === "quotes" && path.length === 3 && path[2] === "duplicate" && req.method === "POST") {
+      const input = revisionGuardSchema.safeParse(await readBody(req));
+      if (!input.success) return sendJson(res, 400, { error: "invalid_input" });
+      const source = await getQuote(quotes!)(installationId!, path[1]!);
+      if (!source) return sendJson(res, 404, { error: "quote_not_found" });
+      if (source.revision !== input.data.expectedRevision) return sendJson(res, 409, { error: "revision_conflict" });
       return sendJson(res, 201, await duplicateQuote(quotes!)(installationId!, path[1]!));
+    }
+    if (path[0] === "quotes" && path.length === 3 && path[2] === "review" && req.method === "GET") {
+      const review = await getQuoteReview(quotes!)(installationId!, path[1]!);
+      return review ? sendJson(res, 200, review) : sendJson(res, 404, { error: "quote_not_found" });
+    }
+    if (path[0] === "quotes" && path.length === 4 && path[2] === "adjustments" && path[3] === "preview" && req.method === "POST") {
+      const parsed = previewPriceAdjustmentRequestSchema.safeParse(await readBody(req));
+      if (!parsed.success) return sendJson(res, 400, { error: "invalid_input", details: parsed.error.issues });
+      return sendJson(res, 200, await previewPriceAdjustment(quotes!)(installationId!, path[1]!, parsed.data));
+    }
+    if (path[0] === "quotes" && path.length === 3 && path[2] === "preview-line" && req.method === "POST") {
+      const parsed = quoteCommandSchema.safeParse(await readBody(req));
+      if (!parsed.success || (parsed.data.type !== "createQuoteLine" && parsed.data.type !== "updateQuoteLineDetails")) return sendJson(res, 400, { error: "invalid_input" });
+      return sendJson(res, 200, await previewQuoteLine(quotes!)(installationId!, path[1]!, parsed.data));
+    }
+    if (path[0] === "quotes" && path.length === 3 && ["recalculate", "client"].includes(path[2]!) && (req.method === "POST" || req.method === "PATCH")) {
+      const body = await readBody(req);
+      const parsed = quoteCommandSchema.safeParse({ ...(body as object), type: path[2] === "client" ? "selectClient" : "recalculateQuote" });
+      if (!parsed.success) return sendJson(res, 400, { error: "invalid_input" });
+      if (parsed.data.type === "selectClient") {
+        return sendJson(res, 200, await updateQuote(quotes!)({ installationId: installationId!, id: path[1]!, clientId: parsed.data.clientId, expectedRevision: parsed.data.expectedRevision }));
+      }
+      return sendJson(res, 200, await executeQuoteCommand(quoteWorkflow!, { ...parsed.data, installationId: installationId!, quoteId: path[1]! }));
     }
     if (path[0] === "quotes" && path.length === 3 && path[2] === "commands" && req.method === "POST") {
       const parsed = quoteCommandSchema.safeParse(await readBody(req));
       if (!parsed.success) return sendJson(res, 400, { error: "invalid_input", details: parsed.error.issues });
       const command = parsed.data;
       const context = { ...command, installationId: installationId!, quoteId: path[1]! };
+      if (command.type === "selectClient") return sendJson(res, 200, await updateQuote(quotes!)({ installationId: installationId!, id: path[1]!, clientId: command.clientId, expectedRevision: command.expectedRevision }));
       if (command.type === "addMaterialLine") return sendJson(res, 200, await addMaterialLine(quoteWorkflow!)(context as unknown as Record<string, unknown>));
       if (command.type === "addLaborLine") return sendJson(res, 200, await addLaborLine(quoteWorkflow!)(context as unknown as Record<string, unknown>));
       if (command.type === "addTravelLine") return sendJson(res, 200, await addTravelLine(quoteWorkflow!)(context as unknown as Record<string, unknown>));
@@ -457,11 +574,11 @@ const server = createServer(async (req, res) => {
       if (!quote) return sendJson(res, 404, { error: "quote_not_found" });
       if (quote.revision !== parsed.data.expectedRevision) return sendJson(res, 409, { error: "revision_conflict" });
       if (quote.accessMode === "read_only" || quote.status === "archived") return sendJson(res, 422, { error: "quote_read_only" });
-      const holdedInput = buildHoldedEstimate(quote);
-      if (!holdedInput) return sendJson(res, 422, { error: "quote_not_calculated" });
-      const result = await newHoldedClient(resolvedKey).saveEstimate(holdedInput);
-      await updateQuote(quotes!)({ installationId: installationId!, id: quote.id, expectedRevision: quote.revision, status: "finalized", holdedEstimateId: result.id });
-      return sendJson(res, 200, await getQuote(quotes!)(installationId!, quote.id));
+      if (quote.clientId) {
+        const client = await clients!.getById(installationId!, quote.clientId);
+        if (client && !client.holdedContactId) await syncClientWithHolded({ clients: clients!, holded: await buildHoldedGateway() })({ installationId: installationId!, id: client.id, expectedRevision: client.revision });
+      }
+      return sendJson(res, 200, await syncQuoteToHolded({ quotes: quotes!, clients: clients!, exports: createQuoteExportRepository(database!.db), holded: createHoldedEstimateGateway(newHoldedClient(resolvedKey)), taxMapping: (getHoldedSettingsConfig(config).taxMapping ?? {}) as Record<string, string> })({ installationId: installationId!, quoteId: quote.id, expectedRevision: parsed.data.expectedRevision }));
     }
     if (path[0] === "quotes" && path.length === 2 && req.method === "PATCH") {
       const parsed = revisionGuardSchema.safeParse(await readBody(req));
@@ -472,6 +589,7 @@ const server = createServer(async (req, res) => {
   } catch (error) {
     return mapError(res, error);
   }
+  });
 });
 
 server.listen(port, host, () => {
@@ -487,32 +605,4 @@ process.on("SIGINT", stop);
 
 function normalizeDecimal(value: string | undefined) {
   return value?.trim() ? value.trim().replace(",", ".") : undefined;
-}
-
-type HoldedQuote = NonNullable<Awaited<ReturnType<ReturnType<typeof getQuote>>>>;
-
-function buildHoldedEstimate(quote: HoldedQuote) {
-  const calculation = quote.calculation as { lines?: Array<{ quoteLineId?: string; sale?: string }> } | null | undefined;
-  if (!calculation?.lines) return null;
-  const sales = new Map(calculation.lines.map((line) => [line.quoteLineId, line.sale]));
-  const lines = quote.lines as Array<{ id: string; type: string; description: string; igicRate: string }>;
-  const items = lines.filter((line) => !["title", "adjustment"].includes(line.type)).map((line) => ({
-    name: line.description.slice(0, 250),
-    units: 1,
-    price: Number(sales.get(line.id) ?? "0"),
-    tax: Number(line.igicRate),
-  }));
-  if (!items.length || items.some((item) => !Number.isFinite(item.price) || !Number.isFinite(item.tax))) return null;
-  const client = (quote.clientSnapshot ?? {}) as Record<string, unknown>;
-  return {
-    ...(quote.holdedEstimateId ? { documentId: quote.holdedEstimateId } : {}),
-    reference: quote.reference,
-    title: quote.title,
-    date: Math.floor(Date.now() / 1000),
-    contactName: typeof client.name === "string" && client.name.trim() ? client.name : "Cliente",
-    ...(typeof client.email === "string" && client.email.trim() ? { contactEmail: client.email } : {}),
-    ...(typeof client.address === "string" && client.address.trim() ? { contactAddress: client.address } : {}),
-    notes: `Presupuesto ${quote.reference} generado desde Index Clima`,
-    items,
-  };
 }

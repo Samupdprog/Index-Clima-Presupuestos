@@ -58,6 +58,11 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
       FEATURE_HOLDED: ${FEATURE_HOLDED:-false}
       HOLDED_API_KEY: ${HOLDED_API_KEY:-}
+      HOLDED_ENCRYPTION_KEY: ${HOLDED_ENCRYPTION_KEY:-}
+      HOLDED_HEALTH_CHECK_INTERVAL_MINUTES: ${HOLDED_HEALTH_CHECK_INTERVAL_MINUTES:-5}
+      ALLOW_DATA_RESET: ${ALLOW_DATA_RESET:-false}
+      HOLDED_WEBHOOK_SECRET: ${HOLDED_WEBHOOK_SECRET:-}
+      HOLDED_ACCOUNT_ID: ${HOLDED_ACCOUNT_ID:-}
     ports:
       - "127.0.0.1:${API_PORT:-4000}:4000"
     networks:
@@ -86,6 +91,9 @@ services:
       TZ: ${TZ:-UTC}
       HOST: 0.0.0.0
       PORT: "4002"
+      FEATURE_HOLDED: ${FEATURE_HOLDED:-false}
+      INTERNAL_API_URL: http://api:4000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
       DATABASE_URL: ${DATABASE_URL}
       HOLDED_API_KEY: ${HOLDED_API_KEY:-}
     ports:
@@ -117,6 +125,7 @@ services:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
       INTERNAL_API_URL: http://api:4000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
     networks:
@@ -135,9 +144,7 @@ services:
       - no-new-privileges:true
 
   mcp:
-    # MCP aún no está habilitado (FEATURE_MCP=false). Bajo un profile para que
-    # NO arranque por defecto y no entre en bucle de reinicio. Para levantarlo
-    # explícitamente: `docker compose --profile mcp up -d mcp`.
+    # Transporte autenticado; profile explícito para instalaciones sin IA.
     profiles: ["mcp"]
     build:
       context: .
@@ -150,7 +157,12 @@ services:
       HOST: 0.0.0.0
       PORT: "4001"
       MCP_HOST: ${MCP_HOST}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:4001/mcp}
       MCP_AUTH_MODE: ${MCP_AUTH_MODE:-disabled}
+      FEATURE_MCP: ${FEATURE_MCP:-false}
+      INSTALLATION_ID: ${INSTALLATION_ID}
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      MCP_SCOPES: ${MCP_SCOPES:-clients:read,clients:write,quotes:read,quotes:write,holded:read,holded:write}
       MCP_REQUIRED_SCOPES: ${MCP_REQUIRED_SCOPES:-}
       AUTH_ISSUER_URL: ${AUTH_ISSUER_URL:-}
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}

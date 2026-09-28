@@ -26,7 +26,17 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "test:integration": "vitest run packages/db/integration/clients.integration.test.ts",
-    "check": "npm run typecheck && npm test && npm run build"
+    "test:integration": "vitest run packages/db/integration",
+    "test:security": "vitest run tests/security",
+    "check": "npm run typecheck && npm test && npm run build",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  },
+  "overrides": {
+    "@esbuild-kit/core-utils": {
+      "esbuild": "^0.25.9"
+    }
   }
 }

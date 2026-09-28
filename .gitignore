@@ -7,6 +7,9 @@ dist/
 coverage/
 *.tsbuildinfo
 *.log
+antes-de-pruebas.sql
+test-results/
+playwright-report/
 .DS_Store
 
 backups/*

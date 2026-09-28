@@ -12,3 +12,7 @@ dist
 coverage
 backups
 *.log
+antes-de-pruebas.sql
+test-results
+playwright-report
+.tmp-*
