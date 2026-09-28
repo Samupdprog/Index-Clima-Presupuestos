@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, isNull, max, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, max, or, sql } from "drizzle-orm";
 import { calculateQuoteRecord } from "@quotes/application";
 import { serializeQuoteCalculation, PricingValidationError } from "@quotes/domain";
 import type { Database } from "../client.js";
@@ -91,6 +91,14 @@ export function createQuoteRepository(db: Database) {
         query ? or(ilike(quotes.reference, `%${query}%`), ilike(quotes.title, `%${query}%`)) : undefined,
       )).orderBy(desc(quotes.updatedAt));
       return rows.map((quote) => ({ ...quote, lines: [] }));
+    },
+
+    /** Enlaces locales de Estimates remotos; siempre filtrado por instalación. */
+    async findByHoldedEstimateIds(installationId: string, holdedEstimateIds: string[]) {
+      if (!holdedEstimateIds.length) return [];
+      const rows = await db.select({ quoteId: quotes.id, reference: quotes.reference, holdedEstimateId: quotes.holdedEstimateId }).from(quotes)
+        .where(and(eq(quotes.installationId, installationId), inArray(quotes.holdedEstimateId, holdedEstimateIds)));
+      return rows.flatMap((row) => row.holdedEstimateId ? [{ quoteId: row.quoteId, reference: row.reference, holdedEstimateId: row.holdedEstimateId }] : []);
     },
 
     async update(input: UpdateQuoteInput) {
