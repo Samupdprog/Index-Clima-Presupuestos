@@ -45,6 +45,9 @@ export const quoteOutput = z.object({
   clientId: optionalText,
   clientSnapshot: z.object({ id: z.string().optional(), name: z.string().optional(), taxId: optionalText, email: optionalText, phone: optionalText, address: optionalText }).nullable().optional(),
   holdedEstimateId: optionalText,
+  holdedSyncedReference: optionalText,
+  /** Fecha de envío a la papelera; null si está activo. */
+  deletedAt: optionalText,
   duplicatedFromQuoteId: optionalText,
   lines: z.array(lineOutput).optional(),
   priceAdjustments: z.array(z.object({ id: z.uuid(), scope: z.enum(["line", "selection", "quote"]), mode: z.enum(["amount", "percentage", "target_total"]), value: decimalSchema, targetLineIds: z.array(z.uuid()), baseQuoteRevision: revisionSchema })).optional(),
