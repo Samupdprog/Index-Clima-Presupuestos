@@ -82,3 +82,22 @@ export function safeNextPath(value: string | null | undefined) {
 export function sessionCookieOptions(secure: boolean, maxAge = SESSION_MAX_AGE_SECONDS) {
   return { httpOnly: true, secure, sameSite: "lax" as const, path: "/", maxAge };
 }
+
+/**
+ * Comprobación completa para rutas de servidor (defensa en profundidad además del proxy):
+ * sesión firmada vigente o credenciales Basic. `true` si el acceso no está protegido.
+ */
+export async function requestIsAuthorized(request: { headers: Headers; cookies: { get(name: string): { value: string } | undefined } }, env: Record<string, string | undefined> = process.env) {
+  const config = accessConfig(env);
+  if (!config) return true;
+  if (await verifySessionToken(config, request.cookies.get(SESSION_COOKIE)?.value)) return true;
+  const header = request.headers.get("authorization") || "";
+  if (!header.startsWith("Basic ")) return false;
+  try {
+    const decoded = atob(header.slice(6));
+    const separator = decoded.indexOf(":");
+    return separator >= 0 && credentialsMatch(config, decoded.slice(0, separator), decoded.slice(separator + 1));
+  } catch {
+    return false;
+  }
+}

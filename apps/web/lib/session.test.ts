@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessConfig, createSessionToken, credentialsMatch, safeNextPath, SESSION_MAX_AGE_SECONDS, verifySessionToken } from "./session";
+import { accessConfig, createSessionToken, credentialsMatch, requestIsAuthorized, safeNextPath, SESSION_COOKIE, SESSION_MAX_AGE_SECONDS, verifySessionToken } from "./session";
 
 const config = accessConfig({ APP_ACCESS_PASSWORD: "TEST-password-1234", APP_ACCESS_USERNAME: "index-clima", INTERNAL_SERVICE_TOKEN: "x".repeat(40) })!;
 
@@ -23,5 +23,19 @@ describe("web session", () => {
     expect(credentialsMatch(config, "index-clima", "TEST-password-123")).toBe(false);
     expect(credentialsMatch(config, "otro", "TEST-password-1234")).toBe(false);
     for (const [input, expected] of [["/presupuestos/1", "/presupuestos/1"], ["//evil.com", "/presupuestos"], ["https://evil.com", "/presupuestos"], ["/\\evil", "/presupuestos"], ["/login", "/presupuestos"], [null, "/presupuestos"]] as const) expect(safeNextPath(input)).toBe(expected);
+  });
+  it("authorizes server routes only with a valid session or Basic credentials", async () => {
+    const env = { APP_ACCESS_PASSWORD: "TEST-password-1234", APP_ACCESS_USERNAME: "index-clima", INTERNAL_SERVICE_TOKEN: "x".repeat(40) };
+    const request = (cookie?: string, authorization?: string) => ({
+      headers: new Headers(authorization ? { authorization } : {}),
+      cookies: { get: (name: string) => (name === SESSION_COOKIE && cookie ? { value: cookie } : undefined) },
+    });
+    expect(await requestIsAuthorized(request(), {})).toBe(true);
+    expect(await requestIsAuthorized(request(), env)).toBe(false);
+    expect(await requestIsAuthorized(request("v1.9999999999.forged.sig"), env)).toBe(false);
+    expect(await requestIsAuthorized(request(await createSessionToken(config)), env)).toBe(true);
+    expect(await requestIsAuthorized(request(undefined, `Basic ${btoa("index-clima:TEST-password-1234")}`), env)).toBe(true);
+    expect(await requestIsAuthorized(request(undefined, `Basic ${btoa("index-clima:wrong")}`), env)).toBe(false);
+    expect(await requestIsAuthorized(request(undefined, "Basic %%%"), env)).toBe(false);
   });
 });

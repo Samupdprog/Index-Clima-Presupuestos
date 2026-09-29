@@ -38,7 +38,7 @@ describe("public web access", () => {
   });
   it("keeps login, health, webhook and app icons reachable", async () => {
     process.env.APP_ACCESS_PASSWORD = "TEST-long-secret-password";
-    for (const path of ["/login", "/api/auth/login", "/api/health", "/api/holded-webhook", "/manifest.webmanifest", "/icon.png", "/apple-icon.png"]) {
+    for (const path of ["/login", "/api/auth/login", "/api/health", "/api/holded-webhook", "/manifest.webmanifest", "/icon.png", "/apple-icon.png", "/index-clima-logo.png", "/icons/icon-192.png"]) {
       expect((await proxy(new NextRequest(url(path)))).status).toBe(200);
     }
   });

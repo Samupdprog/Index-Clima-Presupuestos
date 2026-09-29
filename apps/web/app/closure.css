@@ -230,8 +230,12 @@ input[aria-invalid="true"] {
 }
 
 .login-logo {
-  width: 150px;
+  width: 168px;
   height: auto;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  justify-self: start;
 }
 
 .login-card h1 {

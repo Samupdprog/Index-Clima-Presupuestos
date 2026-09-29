@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { accessConfig, createSessionToken, credentialsMatch, SESSION_COOKIE, SESSION_RENEW_BELOW_SECONDS, sessionCookieOptions, verifySessionToken } from "./lib/session";
 
 /** Rutas accesibles sin sesión: login, salud, webhook firmado e iconos de la app. */
-const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/health", "/api/holded-webhook", "/manifest.webmanifest", "/icon.png", "/apple-icon.png", "/favicon.ico"]);
+const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/health", "/api/holded-webhook", "/manifest.webmanifest", "/icon.png", "/apple-icon.png", "/favicon.ico", "/index-clima-logo.png", "/index-clima-logo.svg"]);
+const PUBLIC_PREFIXES = ["/icons/"];
 
 function isSecure(request: NextRequest) {
   return request.headers.get("x-forwarded-proto") === "https" || request.nextUrl.protocol === "https:";
@@ -24,7 +25,7 @@ function basicCredentials(request: NextRequest) {
 export async function proxy(request: NextRequest) {
   const config = accessConfig();
   const { pathname, search } = request.nextUrl;
-  if (!config || PUBLIC_PATHS.has(pathname)) return NextResponse.next();
+  if (!config || PUBLIC_PATHS.has(pathname) || PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return NextResponse.next();
 
   const expiresAt = await verifySessionToken(config, request.cookies.get(SESSION_COOKIE)?.value);
   if (expiresAt) {

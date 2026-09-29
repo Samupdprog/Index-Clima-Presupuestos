@@ -1,8 +1,10 @@
 import { NextRequest } from "next/server";
+import { requestIsAuthorized } from "../../../../lib/session";
 
 export const dynamic = "force-dynamic";
 
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  if (!(await requestIsAuthorized(request))) return Response.json({ error: "session_required" }, { status: 401 });
   const origin = request.headers.get("origin");
   if (!["GET", "HEAD"].includes(request.method) && origin) {
     // Next's internal URL uses the container port; Host retains the browser's public authority.
