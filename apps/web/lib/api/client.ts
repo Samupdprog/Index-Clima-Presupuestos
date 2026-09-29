@@ -99,7 +99,14 @@ export const api = {
   createCatalog: <T extends CatalogRecord>(kind: CatalogKind, data: Record<string, unknown>) => request<T>(`/catalogs/${kind}`, { method: "POST", body: JSON.stringify(data) }),
   updateCatalog: <T extends CatalogRecord>(kind: CatalogKind, id: string, data: Record<string, unknown>) => request<T>(`/catalogs/${kind}/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   archiveCatalog: <T extends CatalogRecord>(kind: CatalogKind, id: string) => request<T>(`/catalogs/${kind}/${id}/archive`, { method: "POST", body: "{}" }),
-  importMaterials: (rows: MaterialImportRow[]) => request<MaterialRecord[]>("/catalogs/materials/import", { method: "POST", body: JSON.stringify({ rows }) }),
+  previewMaterialImport: (rows: MaterialImportRow[]) => request<MaterialImportPlan>("/catalogs/materials/import/preview", { method: "POST", body: JSON.stringify({ rows }) }),
+  applyMaterialImport: (rows: MaterialImportRow[], planHash: string) => request<MaterialImportPlan>("/catalogs/materials/import/apply", { method: "POST", body: JSON.stringify({ rows, planHash }) }),
 };
+
+export interface MaterialImportPlan {
+  summary: { total: number; created: number; updated: number; unchanged: number; invalid: number };
+  items: Array<{ row: number; name: string; action: "create" | "update" | "unchanged" | "invalid"; materialId: string | null; changes: Array<{ field: string; before: string | boolean | null; after: string | boolean | null }>; reason?: "duplicate_row" | "ambiguous_match" }>;
+  planHash: string;
+}
 
 export type { MaterialRecord, EmployeeRecord, TravelRecord, SupplierRecord, TextTemplateRecord };

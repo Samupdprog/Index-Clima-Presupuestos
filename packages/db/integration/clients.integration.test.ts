@@ -308,12 +308,19 @@ describe("catalog material import integration", () => {
   });
 
   it("imports a material batch in one transaction", async () => {
-    const imported = await repository.importMaterials(installationId, [
-      { name: "Unidad interior", supplierNameSnapshot: "Proveedor A", unit: "ud", supplierUnitPrice: "120.50", saleUnitPrice: "180", igicRate: "7" },
-      { name: "Tubería cobre", supplierCode: "COBRE-12", unit: "m", supplierUnitPrice: "8.25", saleUnitPrice: "14.50", igicRate: "7" },
-    ]);
+    await repository.applyMaterialImport(installationId, {
+      creates: [
+        { name: "Unidad interior", supplierNameSnapshot: "Proveedor A", unit: "ud", supplierUnitPrice: "120.50", saleUnitPrice: "180", igicRate: "7" },
+        { name: "Tubería cobre", supplierCode: "COBRE-12", unit: "m", supplierUnitPrice: "8.25", saleUnitPrice: "14.50", igicRate: "7" },
+      ],
+      updates: [],
+      summary: { total: 2, created: 2, updated: 0, unchanged: 0, invalid: 0 },
+    });
+    const imported = await repository.listMaterials(installationId);
     expect(imported).toHaveLength(2);
-    expect(imported[0]?.supplierUnitPrice).toBe("120.500000");
+    expect(imported.find((item) => item.name === "Unidad interior")?.supplierUnitPrice).toBe("120.500000");
+    // Una actualización sobre un id inexistente revierte todo el lote.
+    await expect(repository.applyMaterialImport(installationId, { creates: [{ name: "No debe quedar" }], updates: [{ id: randomUUID(), changes: { unit: "x" } }], summary: { total: 2, created: 1, updated: 1, unchanged: 0, invalid: 0 } })).rejects.toThrow("catalog_material_not_found");
     expect(await repository.listMaterials(installationId)).toHaveLength(2);
   });
 });

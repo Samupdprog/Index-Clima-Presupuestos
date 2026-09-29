@@ -178,3 +178,33 @@ input[aria-invalid="true"] {
   color: var(--foreground-muted);
   line-height: 1.5;
 }
+
+/* v1.1 · Resumen de actualización masiva de materiales. */
+.import-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.import-summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--foreground-muted);
+  font-weight: 650;
+}
+
+.import-summary span svg { width: 15px; height: 15px; }
+.import-summary span[data-kind="update"] { background: var(--warning-soft); color: var(--warning); }
+.import-summary span[data-kind="create"] { background: var(--success-soft); color: var(--success); }
+.import-summary span[data-kind="invalid"] { background: var(--danger-soft); color: var(--danger); }
+
+.change-chip {
+  display: inline-block;
+  margin: 0 8px 4px 0;
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}

@@ -1,6 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import type { Database } from "../client.js";
 import { catalogMaterials, catalogTravels, employeeSupplements, employees, suppliers, textTemplates } from "../schema/common.js";
+import { auditEvents } from "../schema/operations.js";
+import { auditActor } from "../audit-context.js";
 
 export function createCatalogRepository(db: Database) {
   async function validateReferences(installationId: string, input: { supplierId?: string | null | undefined; employeeId?: string | null | undefined }) {
@@ -19,7 +21,15 @@ export function createCatalogRepository(db: Database) {
     listTextTemplates: (installationId: string) => db.select().from(textTemplates).where(eq(textTemplates.installationId, installationId)),
     listSuppliers: (installationId: string) => db.select().from(suppliers).where(eq(suppliers.installationId, installationId)),
     createMaterial: async (input: typeof catalogMaterials.$inferInsert) => { await validateReferences(input.installationId, input); return db.insert(catalogMaterials).values(input).returning(); },
-    importMaterials: (installationId: string, rows: Array<Omit<typeof catalogMaterials.$inferInsert, "installationId">>) => db.transaction((tx) => tx.insert(catalogMaterials).values(rows.map((row) => ({ ...row, installationId }))).returning()),
+    /** Aplica un plan de importación ya validado (altas + cambios) en una transacción auditada. */
+    applyMaterialImport: (installationId: string, plan: { creates: Array<Record<string, unknown>>; updates: Array<{ id: string; changes: Record<string, unknown> }>; summary: Record<string, number> }) => db.transaction(async (tx) => {
+      if (plan.creates.length) await tx.insert(catalogMaterials).values(plan.creates.map((values) => ({ ...(values as Partial<typeof catalogMaterials.$inferInsert>), name: String(values.name), installationId })));
+      for (const update of plan.updates) {
+        const [row] = await tx.update(catalogMaterials).set({ ...(update.changes as Partial<typeof catalogMaterials.$inferInsert>), updatedAt: new Date() }).where(and(eq(catalogMaterials.id, update.id), eq(catalogMaterials.installationId, installationId))).returning({ id: catalogMaterials.id });
+        if (!row) throw new Error("catalog_material_not_found");
+      }
+      await tx.insert(auditEvents).values({ installationId, ...auditActor(), action: "catalog.materials.imported", entityType: "catalog_materials", after: plan.summary });
+    }),
     createEmployee: (input: typeof employees.$inferInsert) => db.insert(employees).values(input).returning(),
     createSupplement: async (input: typeof employeeSupplements.$inferInsert) => { await validateReferences(input.installationId, input); return db.insert(employeeSupplements).values(input).returning(); },
     createTravel: (input: typeof catalogTravels.$inferInsert) => db.insert(catalogTravels).values(input).returning(),

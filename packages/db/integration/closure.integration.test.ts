@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { createDb, createQuoteRepository, createQuoteWorkflowRepository, createClientRepository, createDataResetRepository, createQuoteExportRepository, installations, auditEvents, quotes as quotesTable, withAuditActor } from "../src/index.js";
-import { previewPriceAdjustment, previewQuoteLine } from "@quotes/application";
+import { createDb, createQuoteRepository, createQuoteWorkflowRepository, createClientRepository, createDataResetRepository, createQuoteExportRepository, createCatalogRepository, installations, auditEvents, quotes as quotesTable, withAuditActor } from "../src/index.js";
+import { applyMaterialImport, previewMaterialImport, previewPriceAdjustment, previewQuoteLine, type MaterialImportRepository } from "@quotes/application";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -100,6 +100,25 @@ describe("functional closure against PostgreSQL", () => {
     expect(await quotes.getQuoteById(installationId, sent.id)).toBeNull();
     expect((await db.select().from(auditEvents).where(eq(auditEvents.entityId, sent.id))).some((event) => event.action === "quote.deleted")).toBe(true);
     quoteId = (await quotes.create({ installationId, title: "TEST sustituto" })).id;
+  });
+  it("previews and applies a bulk material update exactly once", async () => {
+    const catalog = createCatalogRepository(db);
+    await catalog.createMaterial({ installationId, name: "TEST tubo", supplierCode: "T-1", supplierNameSnapshot: "TEST proveedor", unit: "m", supplierUnitPrice: "5", saleUnitPrice: "9" });
+    const importer = catalog as unknown as MaterialImportRepository;
+    const rows = [
+      { name: "TEST tubo", supplierCode: "T-1", supplierNameSnapshot: "TEST proveedor", unit: "m", igicRate: "7", supplierUnitPrice: "5,5" },
+      { name: "TEST nuevo", supplierCode: "T-2", supplierNameSnapshot: "TEST proveedor", unit: "ud", igicRate: "7", supplierUnitPrice: "10" },
+    ];
+    const plan = await previewMaterialImport(importer)(installationId, rows);
+    expect(plan.summary).toMatchObject({ updated: 1, created: 1, unchanged: 0 });
+    expect((await catalog.listMaterials(installationId)).find((item) => item.supplierCode === "T-1")!.supplierUnitPrice).toBe("5.000000");
+    await applyMaterialImport(importer)(installationId, rows, plan.planHash);
+    const after = await catalog.listMaterials(installationId);
+    expect(after.find((item) => item.supplierCode === "T-1")!.supplierUnitPrice).toBe("5.500000");
+    expect(after.some((item) => item.supplierCode === "T-2")).toBe(true);
+    // Repetir el mismo apply: el catálogo ya cambió, así que el plan antiguo se rechaza.
+    await expect(applyMaterialImport(importer)(installationId, rows, plan.planHash)).rejects.toThrow("catalog_changed_since_preview");
+    expect((await previewMaterialImport(importer)(installationId, rows)).summary).toMatchObject({ unchanged: 2, created: 0, updated: 0 });
   });
   it("links remote Holded estimates to local quotes only within the installation", async () => {
     const estimateId = randomUUID().replace(/-/g, "").slice(0, 24);

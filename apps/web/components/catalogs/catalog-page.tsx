@@ -1,14 +1,14 @@
 "use client";
 
 import { DropdownMenu } from "radix-ui";
-import { Archive, BriefcaseBusiness, Building2, CheckCircle2, FileSpreadsheet, FileText, LoaderCircle, MoreHorizontal, Package, PencilLine, Plus, Search, Truck, Upload } from "lucide-react";
+import { Archive, ArchiveRestore, BriefcaseBusiness, Building2, CheckCircle2, FileSpreadsheet, FileText, LoaderCircle, MoreHorizontal, Package, PencilLine, Plus, Search, Truck, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { readSheet, type SheetData } from "read-excel-file/browser";
 import type { MaterialImportRow } from "@quotes/contracts";
 import { Dialog, DialogClose, DialogContent } from "../animate-ui/overlay";
 import { RippleButton } from "../animate-ui/ripple-button";
 import { ErrorState, ToastViewport, useToasts } from "../ui/feedback";
-import { api, ApiError } from "../../lib/api/client";
+import { api, ApiError, type MaterialImportPlan } from "../../lib/api/client";
 import type { CatalogKind, CatalogRecord } from "../../lib/api/types";
 import { formatMoney, formatNumber } from "../../lib/format";
 import { decimalForApi, formatDecimalForInput, parseDecimalText } from "../../lib/decimal";
@@ -28,42 +28,58 @@ export function CatalogPage({ kind }: { kind: UiKind }) {
   const load = useCallback(async () => { setLoading(true); setError(""); try { setRecords(await api.getCatalog(item.api)); } catch (cause) { setError(cause instanceof ApiError && cause.status === 503 ? "La API no está disponible." : "No se pudo cargar este catálogo."); } finally { setLoading(false); } }, [item.api]);
   useEffect(() => { void load(); }, [load]);
   const visible = useMemo(() => records.filter((record) => recordName(record).toLowerCase().includes(query.toLowerCase())), [query, records]);
+  async function reactivate(record: CatalogRecord) { try { await api.updateCatalog(item.api, record.id, { active: true }); push(`${capitalize(item.singular)} reactivado`); await load(); } catch { push("No se pudo reactivar el registro", "error"); } }
   async function archive(record: CatalogRecord) { try { await api.archiveCatalog(item.api, record.id); push(`${capitalize(item.singular)} desactivado`); await load(); } catch { push("No se pudo actualizar el registro", "error"); } }
-  return <div className="page"><div className="page-header"><div><p className="eyebrow">Catálogo</p><h1 className="page-title">{item.title}</h1><p className="page-subtitle">{item.description}</p></div><div className="header-actions">{kind === "materiales" ? <RippleButton variant="secondary" onClick={() => setImportOpen(true)}><FileSpreadsheet />Importar Excel</RippleButton> : null}<RippleButton onClick={() => setEditing("new")}><Plus />Nuevo {item.singular}</RippleButton></div></div>
+  return <div className="page"><div className="page-header"><div><p className="eyebrow">Catálogo</p><h1 className="page-title">{item.title}</h1><p className="page-subtitle">{item.description}</p></div><div className="header-actions">{kind === "materiales" ? <RippleButton variant="secondary" onClick={() => setImportOpen(true)}><FileSpreadsheet />Actualizar desde Excel</RippleButton> : null}<RippleButton onClick={() => setEditing("new")}><Plus />Nuevo {item.singular}</RippleButton></div></div>
     <div className="toolbar"><label className="search-field"><Search /><span className="sr-only">Buscar</span><input className="input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Buscar ${item.title.toLowerCase()}…`} /></label></div>
-    {loading ? <div className="catalog-grid">{Array.from({ length: 6 }, (_, index) => <div className="skeleton" style={{ height: 170 }} key={index} />)}</div> : error ? <div className="panel"><ErrorState message={error} onRetry={() => void load()} /></div> : visible.length === 0 ? <div className="panel empty-state"><div><div className="empty-icon"><Icon /></div><h3>{query ? "No hay coincidencias" : `Aún no hay ${item.title.toLowerCase()}`}</h3><p>{query ? "Prueba con otro término." : `Crea el primer ${item.singular} para utilizarlo en presupuestos.`}</p>{!query ? <RippleButton onClick={() => setEditing("new")}><Plus />Crear {item.singular}</RippleButton> : null}</div></div> : <div className="catalog-grid">{visible.map((record) => <article className="panel catalog-card" key={record.id}><div className="catalog-card-head"><div><h3>{recordName(record)}</h3><p>{recordSubtitle(record)}</p></div><DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="button button-ghost button-icon" aria-label="Acciones"><MoreHorizontal /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="dropdown-content" align="end"><DropdownMenu.Item className="dropdown-item" onSelect={() => setEditing(record)}><PencilLine />Editar</DropdownMenu.Item>{"active" in record && record.active ? <DropdownMenu.Item className="dropdown-item danger" onSelect={() => void archive(record)}><Archive />Desactivar</DropdownMenu.Item> : null}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div><div className="catalog-values">{recordValues(record).map(([label, value]) => <div className="catalog-value" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div></article>)}</div>}
+    {loading ? <div className="catalog-grid">{Array.from({ length: 6 }, (_, index) => <div className="skeleton" style={{ height: 170 }} key={index} />)}</div> : error ? <div className="panel"><ErrorState message={error} onRetry={() => void load()} /></div> : visible.length === 0 ? <div className="panel empty-state"><div><div className="empty-icon"><Icon /></div><h3>{query ? "No hay coincidencias" : `Aún no hay ${item.title.toLowerCase()}`}</h3><p>{query ? "Prueba con otro término." : `Crea el primer ${item.singular} para utilizarlo en presupuestos.`}</p>{!query ? <RippleButton onClick={() => setEditing("new")}><Plus />Crear {item.singular}</RippleButton> : null}</div></div> : <div className="catalog-grid">{visible.map((record) => <article className="panel catalog-card" key={record.id}><div className="catalog-card-head"><div><h3>{recordName(record)}</h3><p>{recordSubtitle(record)}</p></div><DropdownMenu.Root><DropdownMenu.Trigger asChild><button className="button button-ghost button-icon" aria-label="Acciones"><MoreHorizontal /></button></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="dropdown-content" align="end"><DropdownMenu.Item className="dropdown-item" onSelect={() => setEditing(record)}><PencilLine />Editar</DropdownMenu.Item>{"active" in record && record.active ? <DropdownMenu.Item className="dropdown-item danger" onSelect={() => void archive(record)}><Archive />Desactivar</DropdownMenu.Item> : <DropdownMenu.Item className="dropdown-item" onSelect={() => void reactivate(record)}><ArchiveRestore />Reactivar</DropdownMenu.Item>}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div><div className="catalog-values">{recordValues(record).map(([label, value]) => <div className="catalog-value" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div></article>)}</div>}
     <CatalogDialog kind={kind} apiKind={item.api} record={editing} open={Boolean(editing)} onOpenChange={(open) => { if (!open) setEditing(null); }} onSaved={async (message) => { setEditing(null); push(message); await load(); }} />
-    {kind === "materiales" ? <MaterialImportDialog open={importOpen} onOpenChange={setImportOpen} onImported={async (count) => { setImportOpen(false); push(`${count} ${count === 1 ? "material importado" : "materiales importados"}`); await load(); }} /> : null}<ToastViewport toasts={toasts} />
+    {kind === "materiales" ? <MaterialImportDialog open={importOpen} onOpenChange={setImportOpen} onImported={async (summary) => { setImportOpen(false); push(`${summary.created} nuevos · ${summary.updated} actualizados · ${summary.unchanged} sin cambios`); await load(); }} /> : null}<ToastViewport toasts={toasts} />
   </div>;
 }
 
 type ParsedMaterial = { rowNumber: number; data: MaterialImportRow; errors: string[] };
 
-function MaterialImportDialog({ open, onOpenChange, onImported }: { open: boolean; onOpenChange: (open: boolean) => void; onImported: (count: number) => void }) {
-  const [fileName, setFileName] = useState(""); const [rows, setRows] = useState<ParsedMaterial[]>([]); const [error, setError] = useState(""); const [reading, setReading] = useState(false); const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setFileName(""); setRows([]); setError(""); setReading(false); setBusy(false); } }, [open]);
+const FIELD_LABELS: Record<string, string> = { name: "Nombre", supplierNameSnapshot: "Proveedor", supplierCode: "Código", unit: "Unidad", supplierUnitPrice: "Coste", saleUnitPrice: "Venta", igicRate: "IGIC", description: "Descripción", active: "Activo" };
+function changeValue(field: string, value: string | boolean | null) {
+  if (value === null || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Sí" : "No";
+  if (field === "supplierUnitPrice" || field === "saleUnitPrice") return formatMoney(value);
+  if (field === "igicRate") return `${formatNumber(value)} %`;
+  return value;
+}
+
+function MaterialImportDialog({ open, onOpenChange, onImported }: { open: boolean; onOpenChange: (open: boolean) => void; onImported: (summary: MaterialImportPlan["summary"]) => void }) {
+  const [fileName, setFileName] = useState(""); const [rows, setRows] = useState<ParsedMaterial[]>([]); const [plan, setPlan] = useState<MaterialImportPlan | null>(null); const [error, setError] = useState(""); const [reading, setReading] = useState(false); const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setFileName(""); setRows([]); setPlan(null); setError(""); setReading(false); setBusy(false); } }, [open]);
   async function chooseFile(file?: File) {
-    if (!file) return; setFileName(file.name); setRows([]); setError(""); setReading(true);
+    if (!file) return; setFileName(file.name); setRows([]); setPlan(null); setError(""); setReading(true);
     try {
       if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error("format");
-      const sheet = await readSheet(file);
-      const parsed = parseMaterialSheet(sheet);
+      const parsed = parseMaterialSheet(await readSheet(file));
       setRows(parsed);
       if (!parsed.length) setError("El Excel no contiene filas de materiales.");
+      else if (!parsed.some((row) => row.errors.length)) setPlan(await api.previewMaterialImport(parsed.map((row) => row.data)));
     } catch (cause) {
-      setError(cause instanceof Error && cause.message.startsWith("headers:") ? cause.message.slice(8) : "No se pudo leer el Excel. Comprueba que sea un .xlsx válido.");
+      setError(cause instanceof Error && cause.message.startsWith("headers:") ? cause.message.slice(8) : cause instanceof ApiError ? "El servidor no pudo comparar el fichero con el catálogo." : "No se pudo leer el Excel. Comprueba que sea un .xlsx válido.");
     } finally { setReading(false); }
   }
   async function submit() {
-    if (!rows.length || rows.some((row) => row.errors.length)) return; setBusy(true); setError("");
-    try { const created = await api.importMaterials(rows.map((row) => row.data)); await onImported(created.length); }
-    catch { setError("No se pudo completar la importación. No se ha guardado ninguna fila."); }
+    if (!plan || plan.summary.invalid || (!plan.summary.created && !plan.summary.updated)) return; setBusy(true); setError("");
+    try { const applied = await api.applyMaterialImport(rows.map((row) => row.data), plan.planHash); await onImported(applied.summary); }
+    catch (cause) { setError(cause instanceof ApiError && cause.code === "catalog_changed_since_preview" ? "El catálogo cambió desde la previsualización. Vuelve a seleccionar el fichero." : "No se pudo completar la importación. No se ha guardado ninguna fila."); }
     finally { setBusy(false); }
   }
-  const invalid = rows.filter((row) => row.errors.length).length;
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent title="Importar materiales desde Excel" description="Selecciona el fichero, revisa las filas detectadas y confirma la importación masiva." footer={<><DialogClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></DialogClose><RippleButton onClick={() => void submit()} disabled={busy || reading || !rows.length || invalid > 0}>{busy ? <LoaderCircle className="spin" /> : <Upload />}{busy ? "Importando…" : `Importar ${rows.length || ""} materiales`}</RippleButton></>}>
-    <div className="excel-import"><div className="notice"><FileSpreadsheet /><span><strong>Cabeceras:</strong> Nombre, Proveedor, Código proveedor, Unidad, Coste proveedor, Precio venta, IGIC y Descripción. Solo Nombre es obligatoria.</span></div><label className="excel-drop"><input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => void chooseFile(event.target.files?.[0])} /><FileSpreadsheet /><span><strong>{fileName || "Seleccionar archivo .xlsx"}</strong><small>{reading ? "Leyendo el fichero…" : "Puedes reemplazarlo antes de importar"}</small></span></label>
-    {error ? <p className="error-text" role="alert">{error}</p> : null}{rows.length ? <><div className="excel-summary"><span><CheckCircle2 />{rows.length} filas detectadas</span>{invalid ? <strong>{invalid} con errores</strong> : <strong>Listas para importar</strong>}</div><div className="table-wrap excel-preview"><table className="data-table"><thead><tr><th>Fila</th><th>Nombre</th><th>Proveedor</th><th>Unidad</th><th>Coste</th><th>Venta</th><th>IGIC</th></tr></thead><tbody>{rows.slice(0, 100).map((row) => <tr key={row.rowNumber} data-invalid={row.errors.length || undefined}><td>{row.rowNumber}</td><td><strong>{row.data.name || "—"}</strong>{row.errors.length ? <span className="row-subtitle error-text">{row.errors.join(" · ")}</span> : null}</td><td>{row.data.supplierNameSnapshot || "—"}</td><td>{row.data.unit}</td><td>{row.data.supplierUnitPrice || "—"}</td><td>{row.data.saleUnitPrice || "—"}</td><td>{row.data.igicRate} %</td></tr>)}</tbody></table></div>{rows.length > 100 ? <p className="field-hint">Se muestran las primeras 100 filas de {rows.length}.</p> : null}</> : null}</div>
+  const invalidRows = rows.filter((row) => row.errors.length);
+  const pending = plan ? plan.summary.created + plan.summary.updated : 0;
+  const visibleItems = plan ? plan.items.filter((item) => item.action !== "unchanged") : [];
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent wide title="Actualizar materiales desde Excel" description="El servidor compara el fichero con el catálogo. Revisa el resumen y confirma: nada se escribe antes." footer={<><DialogClose asChild><RippleButton variant="secondary">Cancelar</RippleButton></DialogClose><RippleButton onClick={() => void submit()} disabled={busy || reading || !plan || pending === 0 || plan.summary.invalid > 0}>{busy ? <LoaderCircle className="spin" /> : <Upload />}{busy ? "Aplicando…" : pending ? `Aplicar ${pending} ${pending === 1 ? "cambio" : "cambios"}` : "Sin cambios"}</RippleButton></>}>
+    <div className="excel-import"><div className="notice"><FileSpreadsheet /><span><strong>Cabeceras:</strong> Nombre, Proveedor, Código proveedor, Unidad, Coste proveedor, Precio venta, IGIC y Descripción. Se identifican por código de proveedor o, sin código, por nombre y proveedor. Las celdas vacías conservan el valor actual y nunca se desactivan artículos ausentes.</span></div><label className="excel-drop"><input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => void chooseFile(event.target.files?.[0])} /><FileSpreadsheet /><span><strong>{fileName || "Seleccionar archivo .xlsx"}</strong><small>{reading ? "Leyendo y comparando con el catálogo…" : "Puedes reemplazarlo antes de confirmar"}</small></span></label>
+    {error ? <p className="error-text" role="alert">{error}</p> : null}
+    {invalidRows.length ? <><p className="error-text" role="alert">{invalidRows.length} {invalidRows.length === 1 ? "fila tiene errores" : "filas tienen errores"}. Corrige el Excel y vuelve a seleccionarlo.</p><div className="table-wrap excel-preview"><table className="data-table"><thead><tr><th>Fila</th><th>Nombre</th><th>Problema</th></tr></thead><tbody>{invalidRows.slice(0, 100).map((row) => <tr key={row.rowNumber}><td>{row.rowNumber}</td><td><strong>{row.data.name || "—"}</strong></td><td className="error-text">{row.errors.join(" · ")}</td></tr>)}</tbody></table></div></> : null}
+    {plan ? <><div className="import-summary" aria-live="polite"><span><CheckCircle2 />{plan.summary.unchanged} sin cambios</span><span data-kind="update"><PencilLine />{plan.summary.updated} actualizaciones</span><span data-kind="create"><Plus />{plan.summary.created} nuevos</span>{plan.summary.invalid ? <span data-kind="invalid"><Archive />{plan.summary.invalid} no válidos</span> : null}</div>
+    {visibleItems.length ? <div className="table-wrap excel-preview"><table className="data-table"><thead><tr><th>Fila</th><th>Material</th><th>Acción</th><th>Cambios</th></tr></thead><tbody>{visibleItems.slice(0, 200).map((item) => <tr key={item.row} data-invalid={item.action === "invalid" || undefined}><td>{item.row + 1}</td><td><strong>{item.name}</strong></td><td>{item.action === "create" ? "Nuevo" : item.action === "update" ? "Actualizar" : item.reason === "ambiguous_match" ? "Varios materiales coinciden" : "Fila repetida"}</td><td>{item.action === "update" ? item.changes.map((change) => <span className="change-chip" key={change.field}>{FIELD_LABELS[change.field] ?? change.field}: {changeValue(change.field, change.before)} → <strong>{changeValue(change.field, change.after)}</strong></span>) : item.action === "create" ? item.changes.filter((change) => ["supplierUnitPrice", "saleUnitPrice"].includes(change.field)).map((change) => <span className="change-chip" key={change.field}>{FIELD_LABELS[change.field]}: <strong>{changeValue(change.field, change.after)}</strong></span>) : "—"}</td></tr>)}</tbody></table></div> : <p className="field-hint">El catálogo ya coincide con el fichero.</p>}
+    {visibleItems.length > 200 ? <p className="field-hint">Se muestran 200 de {visibleItems.length} filas con cambios.</p> : null}</> : null}</div>
   </DialogContent></Dialog>;
 }
 

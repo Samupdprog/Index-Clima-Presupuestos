@@ -3,6 +3,10 @@ import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   archiveQuote,
+  applyMaterialImport,
+  MaterialImportError,
+  previewMaterialImport,
+  type MaterialImportRepository,
   changeQuoteReference,
   deleteQuotePermanently,
   restoreQuote,
@@ -377,6 +381,7 @@ function requireContext(res: ServerResponse) {
 }
 
 function mapError(res: ServerResponse, error: unknown) {
+  if (error instanceof MaterialImportError) return sendJson(res, error.code === "catalog_changed_since_preview" ? 409 : 422, { error: error.code });
   if (error instanceof QuoteExportError) return sendJson(res, error.code === "revision_conflict" ? 409 : error.code.endsWith("not_found") ? 404 : 422, { error: error.code, details: error.details });
   if (error instanceof Error && error.name === "PricingValidationError") return sendJson(res, error.message === "revision_conflict" ? 409 : error.message.endsWith("not_found") ? 404 : 422, { error: error.message });
   if (error instanceof Error && ["client_not_found", "revision_conflict", "holded_not_configured", "holded_delete_confirmation_required", "client_match_ambiguous", "holded_contact_creation_uncertain"].includes(error.message)) return sendJson(res, error.message === "revision_conflict" ? 409 : error.message === "client_not_found" ? 404 : 422, { error: error.message });
@@ -524,16 +529,16 @@ const server = createServer(async (req, res) => {
       const created = path[1] === "materials" ? await catalog!.createMaterial(data as never) : path[1] === "employees" ? await catalog!.createEmployee(data as never) : path[1] === "supplements" ? await catalog!.createSupplement(data as never) : path[1] === "travels" ? await catalog!.createTravel(data as never) : path[1] === "text-templates" ? await catalog!.createTextTemplate(data as never) : path[1] === "suppliers" ? await catalog!.createSupplier(data as never) : null;
       return created ? sendJson(res, 201, created[0]) : sendJson(res, 404, { error: "catalog_not_found" });
     }
-    if (path[0] === "catalogs" && path[1] === "materials" && path[2] === "import" && path.length === 3 && req.method === "POST") {
-      const parsed = materialImportRequestSchema.safeParse(await readBody(req));
+    // Importación masiva: preview (sin escribir) y apply (solo si el plan no cambió).
+    if (path[0] === "catalogs" && path[1] === "materials" && path[2] === "import" && path.length === 4 && ["preview", "apply"].includes(path[3]!) && req.method === "POST") {
+      const body = await readBody(req);
+      const parsed = materialImportRequestSchema.safeParse(body);
       if (!parsed.success) return sendJson(res, 400, { error: "invalid_input", details: parsed.error.issues });
-      const rows = parsed.data.rows.map((row) => ({
-        ...row,
-        supplierUnitPrice: normalizeDecimal(row.supplierUnitPrice),
-        saleUnitPrice: normalizeDecimal(row.saleUnitPrice),
-        igicRate: normalizeDecimal(row.igicRate) ?? "7",
-      }));
-      return sendJson(res, 201, await catalog!.importMaterials(installationId!, rows));
+      const importer = catalog! as unknown as MaterialImportRepository;
+      if (path[3] === "preview") return sendJson(res, 200, await previewMaterialImport(importer)(installationId!, parsed.data.rows));
+      const planHash = body && typeof body === "object" && typeof (body as { planHash?: unknown }).planHash === "string" ? (body as { planHash: string }).planHash : "";
+      if (!/^[0-9a-f]{16}$/.test(planHash)) return sendJson(res, 400, { error: "invalid_input" });
+      return sendJson(res, 200, await applyMaterialImport(importer)(installationId!, parsed.data.rows, planHash));
     }
     if (path[0] === "catalogs" && path.length === 3 && req.method === "PATCH") {
       const parsed = catalogMutationSchema(path[1]!, true).safeParse(await readBody(req));
@@ -662,6 +667,3 @@ function stop() {
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
 
-function normalizeDecimal(value: string | undefined) {
-  return value?.trim() ? value.trim().replace(",", ".") : undefined;
-}
