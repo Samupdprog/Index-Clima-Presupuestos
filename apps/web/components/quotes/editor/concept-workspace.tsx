@@ -775,6 +775,11 @@ function ConceptLineRow({
       if (line.type !== "labor") await onCommit({ directUnitCost: clean }, "Coste actualizado");
       return;
     }
+    if (field === "costTotal") {
+      // El servidor deriva el coste unitario a partir del total y la cantidad.
+      if (line.type !== "labor") await onCommit({ directTotalCost: clean }, "Coste total actualizado");
+      return;
+    }
     if (field === "saleUnit") {
       if (line.type !== "labor") await onCommit({ saleRule: "unit_price", saleRuleValue: clean }, "Precio por unidad actualizado");
       return;
@@ -843,7 +848,16 @@ function ConceptLineRow({
 
         <div className={styles.valueCell}>
           <span>Coste</span>
-          <strong>{formatMoney(costTotal)}</strong>
+          {line.type !== "labor" ? (
+            <InlineEditor
+              disabled={readOnly}
+              type="number"
+              value={toInputDecimal(costTotal)}
+              display={<strong>{formatMoney(costTotal)}</strong>}
+              ariaLabel="Coste total de la línea"
+              onSave={(value) => commitInline("costTotal", value)}
+            />
+          ) : <strong>{formatMoney(costTotal)}</strong>}
           {line.type !== "labor" ? (
             <InlineEditor
               disabled={readOnly}
@@ -863,7 +877,7 @@ function ConceptLineRow({
             disabled={readOnly || line.type === "labor"}
             type="number"
             value={toInputDecimal(saleTotal)}
-            display={<strong>{formatMoney(saleTotal)} <em>sin IGIC</em></strong>}
+            display={line.type === "labor" ? <strong>{formatMoney(saleTotal)}</strong> : <strong>{formatMoney(saleTotal)} <em>sin IGIC</em></strong>}
             ariaLabel="Precio cliente total sin IGIC"
             onSave={(value) => commitInline("saleTotal", value)}
           />
@@ -878,7 +892,7 @@ function ConceptLineRow({
                 onSave={(value) => commitInline("saleUnit", value)}
                 compact
               />
-            ) : <small>{formatNumber(quantity)} h internas</small>}
+            ) : <small>{formatNumber(quantity)} h · sin IGIC</small>}
             <small>{formatMoney(saleGross)} con IGIC</small>
           </div>
         </div>
@@ -1122,19 +1136,19 @@ function AdvancedLineSheet({
 
   useEffect(() => {
     if (!line || !open) return;
-    setForm(formFromLine(line));
+    setForm({ ...formFromLine(line), directTotalCost: toInputDecimal(calculation?.cost) });
     setDiscountTextValue(line.discounts.map((item) => toInputDecimal(item.percentage)).join(", "));
     setLaborRows(line.laborEntries.map((entry) => laborDraftFromEntry(entry)));
     setMoreOpen(false);
     setError("");
-  }, [line, open]);
+  }, [line, open]); // eslint-disable-line react-hooks/exhaustive-deps -- solo al abrir otra línea
 
   const discountValues = parseDiscounts(discountTextValue);
   const command: Extract<QuoteCommand, { type: "updateQuoteLineDetails" }> | null = line && open && form.description.trim() ? {
     type: "updateQuoteLineDetails", expectedRevision: quote.revision, lineId: line.id,
     line: { description: form.description.trim(), unit: form.unit.trim() || "ud", quantity: decimalOr(form.quantity, "1"), igicRate: decimalOr(form.igicRate, "7"),
       saleRule: form.saleRule, saleRuleValue: decimalOrZero(form.saleRuleValue), saleBaseMode: form.useSupplierListBase ? "supplier_list_price" : "net_cost",
-      directUnitCost: form.directUnitCost.trim() ? decimalOrZero(form.directUnitCost) : null, supplierUnitPrice: form.supplierUnitPrice.trim() ? decimalOrZero(form.supplierUnitPrice) : null,
+      ...(form.costSource === "total" && form.directTotalCost.trim() ? { directUnitCost: null, directTotalCost: decimalOrZero(form.directTotalCost) } : { directUnitCost: form.directUnitCost.trim() ? decimalOrZero(form.directUnitCost) : null }), supplierUnitPrice: form.supplierUnitPrice.trim() ? decimalOrZero(form.supplierUnitPrice) : null,
       supplierNameSnapshot: form.supplierName || null, supplierCodeSnapshot: form.supplierCode || null, internalReference: form.internalReference || null, internalNotes: form.internalNotes || null },
     discounts: discountValues.map((percentage) => ({ percentage })), laborEntries: laborEntries(laborRows),
   } : null;
@@ -1255,8 +1269,9 @@ function AdvancedLineSheet({
                   <Field className={styles.span2} label="Proveedor"><input value={form.supplierName} disabled={readOnly} onChange={(event) => set("supplierName", event.target.value)} placeholder="Opcional" /></Field>
                   <Field label="Código"><input value={form.supplierCode} disabled={readOnly} onChange={(event) => set("supplierCode", event.target.value)} placeholder="Referencia del proveedor" /></Field>
                   <Field label="PVP proveedor / ud"><DecimalInput value={form.supplierUnitPrice} disabled={readOnly} onValueChange={(value) => set("supplierUnitPrice", value)} /></Field>
-                  <Field label="Coste neto / ud"><DecimalInput value={form.directUnitCost} disabled={readOnly} onValueChange={(value) => set("directUnitCost", value)} /></Field>
-                  <Field label="Coste total"><output>{formatMoney(localPreview.costTotal)}</output></Field>
+                  <Field label="Coste neto / ud"><DecimalInput value={form.costSource === "total" ? toDisplayDecimal(localPreview.costUnit) : form.directUnitCost} disabled={readOnly} onValueChange={(value) => setForm((current) => ({ ...current, directUnitCost: value, costSource: "unit" }))} /></Field>
+                  <Field label="Coste total de la línea"><DecimalInput value={form.costSource === "unit" ? toDisplayDecimal(localPreview.costTotal) : form.directTotalCost} disabled={readOnly} onValueChange={(value) => setForm((current) => ({ ...current, directTotalCost: value, costSource: "total" }))} /></Field>
+                  <p className={`${styles.span2} ${styles.fieldHint}`}>Edita el coste por unidad o el total: el servidor calcula el otro con la cantidad.</p>
                 </div>
 
                 {activeLine.type === "material" ? (
@@ -1341,6 +1356,9 @@ type AdvancedForm = {
   supplierCode: string;
   supplierUnitPrice: string;
   directUnitCost: string;
+  /** Coste total de la línea; si es el último editado, el servidor deriva el unitario. */
+  directTotalCost: string;
+  costSource: "unit" | "total";
   baseUnitPrice: string;
   saleRule: SaleRule;
   saleRuleValue: string;
@@ -1359,6 +1377,8 @@ function emptyAdvancedForm(): AdvancedForm {
     supplierCode: "",
     supplierUnitPrice: "",
     directUnitCost: "",
+    directTotalCost: "",
+    costSource: "unit",
     baseUnitPrice: "",
     saleRule: "unit_price",
     saleRuleValue: "",
@@ -1378,6 +1398,8 @@ function formFromLine(line: QuoteLine): AdvancedForm {
     supplierCode: line.supplierCodeSnapshot ?? "",
     supplierUnitPrice: toInputDecimal(line.supplierUnitPrice),
     directUnitCost: toInputDecimal(line.directUnitCost),
+    directTotalCost: "",
+    costSource: "unit",
     baseUnitPrice: toInputDecimal(line.baseUnitPrice),
     saleRule: line.saleRule,
     saleRuleValue: toInputDecimal(line.saleRuleValue),
@@ -1453,7 +1475,7 @@ function Detail({ label, value }: { label: string; value: string }) {
   return <div><span>{label}</span><strong>{value}</strong></div>;
 }
 
-type SimplePreview = { costTotal: string | undefined; saleNet: string | undefined; saleGross: string | undefined; profit: string | undefined; saleUnitGross: string | undefined; effectiveDiscount?: string; saleBase?: string | null; error?: string | undefined; pending: boolean };
+type SimplePreview = { costTotal: string | undefined; costUnit?: string | undefined; saleNet: string | undefined; saleGross: string | undefined; profit: string | undefined; saleUnitGross: string | undefined; effectiveDiscount?: string; saleBase?: string | null; error?: string | undefined; pending: boolean };
 
 function simpleCommand(revision: number, type: ComposerType, description: string, quantity: string, unit: string, cost: string, price: string, igic: string, catalogId?: string): Extract<QuoteCommand, { type: "createQuoteLine" }> {
   return { type: "createQuoteLine", expectedRevision: revision, lineType: type,
@@ -1470,7 +1492,7 @@ function laborCommand(revision: number, description: string, igic: string, rows:
 function useEconomicPreview(quoteId: string, command: QuoteCommand | null): SimplePreview {
   const validCommand = command && (command.type === "createQuoteLine" || command.type === "updateQuoteLineDetails") && command.line.description.trim() ? command : null;
   const { result, error, pending } = useLinePreview(quoteId, validCommand);
-  return { costTotal: result?.cost, saleNet: result?.sale, saleGross: result?.finalSaleWithTax, profit: result?.profit, saleUnitGross: result?.saleUnitWithTax,
+  return { costTotal: result?.cost, costUnit: result?.costUnit, saleNet: result?.sale, saleGross: result?.finalSaleWithTax, profit: result?.profit, saleUnitGross: result?.saleUnitWithTax,
     ...(result?.effectiveSupplierDiscount !== undefined ? { effectiveDiscount: result.effectiveSupplierDiscount } : {}), ...(result?.saleBase !== undefined ? { saleBase: result.saleBase } : {}), error, pending };
 }
 
@@ -1539,6 +1561,13 @@ function decimalOrZero(value: string) {
 
 function toInputDecimal(value: string | number | null | undefined) {
   return formatDecimalInput(value);
+}
+
+/** Valor calculado por el servidor mostrado en un campo (presentación, máx. 6 decimales). */
+function toDisplayDecimal(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return "";
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? formatDecimalInput(numeric.toFixed(6)) : "";
 }
 
 function normalizedRate(value: string | null | undefined) {

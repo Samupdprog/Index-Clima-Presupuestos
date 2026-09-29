@@ -1,5 +1,5 @@
 import type { QuoteRepository } from "../ports/quotes.js";
-import { calculateQuote, calculateLine, calculateMarginOnSalePct, calculateProfitOnCostPct, money, PricingValidationError, resolveSaleBaseUnitPrice, type PriceAdjustment, type QuoteCalculation, type QuoteLineInput } from "@quotes/domain";
+import { calculateQuote, calculateLine, calculateMarginOnSalePct, calculateProfitOnCostPct, money, PricingValidationError, resolveDirectTotalCost, resolveSaleBaseUnitPrice, type PriceAdjustment, type QuoteCalculation, type QuoteLineInput } from "@quotes/domain";
 import type { PriceAdjustmentEconomics, PriceAdjustmentPreview, PreviewPriceAdjustmentRequest, QuoteCommand } from "@quotes/contracts";
 import type { QuoteRecord } from "../ports/quotes.js";
 
@@ -8,7 +8,7 @@ export function getQuote(repository: QuoteRepository) {
 }
 
 export function searchQuotes(repository: QuoteRepository) {
-  return (installationId: string, query = "") => repository.searchQuotes(installationId, query);
+  return (installationId: string, query = "", scope: "active" | "trash" = "active") => repository.searchQuotes(installationId, query, scope);
 }
 
 type RawLine = {
@@ -39,7 +39,7 @@ async function currentQuote(repository: QuoteRepository, installationId: string,
   const quote = await repository.getQuoteById(installationId, id);
   if (!quote) throw new PricingValidationError("quote_not_found");
   if (quote.revision !== revision) throw new PricingValidationError("revision_conflict");
-  if (quote.accessMode === "read_only" || quote.status === "archived") throw new PricingValidationError("quote_read_only");
+  if (quote.accessMode === "read_only" || quote.status === "archived" || Boolean(quote.deletedAt)) throw new PricingValidationError("quote_read_only");
   return quote;
 }
 
@@ -84,7 +84,7 @@ export function previewQuoteLine(repository: QuoteRepository) {
     const quote = await currentQuote(repository, installationId, quoteId, command.expectedRevision);
     const current = command.type === "createQuoteLine" ? { id: "preview", type: command.lineType } : (quote.lines as RawLine[]).find((line) => line.id === command.lineId);
     if (!current) throw new PricingValidationError("quote_line_not_found");
-    const line = toQuoteLineInput({ ...current, ...command.line, discounts: command.discounts, laborEntries: command.laborEntries });
+    const line = toQuoteLineInput({ ...current, ...resolveDirectTotalCost(command.line), discounts: command.discounts, laborEntries: command.laborEntries });
     const calculated = calculateLine(line);
     return { ...calculated, quoteLineId: line.id,
       saleBase: line.saleRule.type === "add_percentage" || line.saleRule.type === "add_euros_per_unit"

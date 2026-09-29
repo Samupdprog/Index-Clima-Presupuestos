@@ -1,10 +1,10 @@
 import { z } from "zod/v4";
-import { decimalStringSchema, nonNegativeDecimalSchema, discountPercentageSchema, extractedLineSchema } from "./quotes.js";
+import { decimalStringSchema, nonNegativeDecimalSchema, discountPercentageSchema, extractedLineSchema, quoteReferenceSchema } from "./quotes.js";
 
 const common = { expectedRevision: z.number().int().nonnegative(), description: z.string().min(1), saleRule: z.enum(["unit_price", "fixed_line_total", "add_euros_per_unit", "add_percentage"]), saleRuleValue: decimalStringSchema, quantity: nonNegativeDecimalSchema.default("1"), igicRate: nonNegativeDecimalSchema.default("7") };
 const laborEntry = z.object({ id: z.uuid().optional(), employeeId: z.uuid().optional(), employeeNameSnapshot: z.string().min(1), hours: nonNegativeDecimalSchema, costRateSnapshot: nonNegativeDecimalSchema, saleRateSnapshot: nonNegativeDecimalSchema });
 const discountEntry = z.object({ id: z.uuid().optional(), percentage: discountPercentageSchema });
-const lineDetails = z.object({ description: common.description, unit: z.string().min(1), quantity: common.quantity, igicRate: common.igicRate, saleRule: common.saleRule, saleRuleValue: common.saleRuleValue, baseUnitPrice: nonNegativeDecimalSchema.nullable().optional(), directUnitCost: nonNegativeDecimalSchema.nullable().optional(), supplierUnitPrice: nonNegativeDecimalSchema.nullable().optional(), saleBaseMode: z.enum(["net_cost", "supplier_list_price"]).optional(), supplierNameSnapshot: z.string().nullable().optional(), supplierCodeSnapshot: z.string().nullable().optional(), internalReference: z.string().nullable().optional(), internalNotes: z.string().nullable().optional() });
+const lineDetails = z.object({ description: common.description, unit: z.string().min(1), quantity: common.quantity, igicRate: common.igicRate, saleRule: common.saleRule, saleRuleValue: common.saleRuleValue, baseUnitPrice: nonNegativeDecimalSchema.nullable().optional(), directUnitCost: nonNegativeDecimalSchema.nullable().optional(), /** Coste total de la línea: el backend deriva el coste unitario con la cantidad (tiene prioridad sobre directUnitCost). */ directTotalCost: nonNegativeDecimalSchema.nullable().optional(), supplierUnitPrice: nonNegativeDecimalSchema.nullable().optional(), saleBaseMode: z.enum(["net_cost", "supplier_list_price"]).optional(), supplierNameSnapshot: z.string().nullable().optional(), supplierCodeSnapshot: z.string().nullable().optional(), internalReference: z.string().nullable().optional(), internalNotes: z.string().nullable().optional() });
 export const quoteCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("importQuoteLines"), expectedRevision: common.expectedRevision, lines: z.array(extractedLineSchema).min(1).max(500) }),
   z.object({ type: z.literal("recalculateQuote"), expectedRevision: common.expectedRevision }),
@@ -19,7 +19,7 @@ export const quoteCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("addLaborEntry"), expectedRevision: common.expectedRevision, quoteLineId: z.uuid(), employeeNameSnapshot: z.string().min(1), hours: z.string(), costRateSnapshot: z.string(), saleRateSnapshot: z.string(), supplementPerHourSnapshot: z.string().optional() }),
   z.object({ type: z.literal("addPriceAdjustment"), expectedRevision: common.expectedRevision, scope: z.enum(["line", "selection", "quote"]), mode: z.enum(["amount", "percentage", "target_total"]), value: decimalStringSchema, targetLineIds: z.array(z.uuid()).optional() }),
   z.object({ type: z.literal("addQuoteText"), expectedRevision: common.expectedRevision, title: z.string(), body: z.string() }),
-  z.object({ type: z.literal("updateQuoteLine"), expectedRevision: common.expectedRevision, lineId: z.uuid(), changes: lineDetails.partial().strict() }),
+    z.object({ type: z.literal("updateQuoteLine"), expectedRevision: common.expectedRevision, lineId: z.uuid(), changes: lineDetails.partial().strict() }),
   z.object({ type: z.literal("deleteQuoteLine"), expectedRevision: common.expectedRevision, lineId: z.uuid() }),
   z.object({ type: z.literal("reorderQuoteLines"), expectedRevision: common.expectedRevision, orderedLineIds: z.array(z.uuid()) }),
   z.object({ type: z.literal("updateSupplierDiscount"), expectedRevision: common.expectedRevision, discountId: z.uuid(), percentage: discountPercentageSchema }),
@@ -34,6 +34,11 @@ export const quoteCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("reorderQuoteTexts"), expectedRevision: common.expectedRevision, orderedTextIds: z.array(z.uuid()) }),
   z.object({ type: z.literal("changeQuoteStatus"), expectedRevision: common.expectedRevision, status: z.enum(["draft", "ready_for_review", "finalized"]) }),
   z.object({ type: z.literal("archiveQuote"), expectedRevision: common.expectedRevision }),
+  z.object({ type: z.literal("changeQuoteReference"), expectedRevision: common.expectedRevision, reference: quoteReferenceSchema }),
+  z.object({ type: z.literal("trashQuote"), expectedRevision: common.expectedRevision }),
+  z.object({ type: z.literal("restoreQuote"), expectedRevision: common.expectedRevision }),
+  // Irreversible: exige confirmación explícita además de la revisión.
+  z.object({ type: z.literal("deleteQuotePermanently"), expectedRevision: common.expectedRevision, confirm: z.literal(true) }),
 ]);
 
 export type QuoteCommand = z.infer<typeof quoteCommandSchema>;

@@ -1,5 +1,5 @@
 import { and, asc, eq, sql } from "drizzle-orm";
-import { calculateQuote, resolveSaleBaseUnitPrice, PricingValidationError, type PriceAdjustment, type QuoteLineInput } from "@quotes/domain";
+import { calculateQuote, resolveDirectTotalCost, resolveSaleBaseUnitPrice, PricingValidationError, type PriceAdjustment, type QuoteLineInput } from "@quotes/domain";
 import type { ExtractedLine } from "@quotes/contracts";
 import type { Database } from "../client.js";
 import { QuoteNotFoundError, ReadOnlyQuoteError, RevisionConflictError } from "../errors.js";
@@ -14,7 +14,7 @@ type MutationContext = { installationId: string; quoteId: string; expectedRevisi
 async function assertQuote(tx: QueryExecutor, input: MutationContext) {
   const [quote] = await tx.select().from(quotes).where(and(eq(quotes.id, input.quoteId), eq(quotes.installationId, input.installationId))).for("update").limit(1);
   if (!quote) throw new QuoteNotFoundError(input.quoteId);
-  if (quote.accessMode === "read_only" || quote.status === "archived") throw new ReadOnlyQuoteError(input.quoteId);
+  if (quote.accessMode === "read_only" || quote.status === "archived" || Boolean(quote.deletedAt)) throw new ReadOnlyQuoteError(input.quoteId);
   if (quote.revision !== input.expectedRevision) throw new RevisionConflictError("quote", input.quoteId);
   return quote;
 }
@@ -65,13 +65,14 @@ export interface AddLineInput {
   catalogMaterialId?: string;
 }
 
-type DetailLine = Pick<typeof quoteLines.$inferInsert, "description" | "unit" | "quantity" | "igicRate" | "saleRule" | "saleRuleValue" | "baseUnitPrice" | "directUnitCost" | "supplierUnitPrice" | "saleBaseMode" | "supplierNameSnapshot" | "supplierCodeSnapshot" | "internalReference" | "internalNotes">;
+type DetailLine = Pick<typeof quoteLines.$inferInsert, "description" | "unit" | "quantity" | "igicRate" | "saleRule" | "saleRuleValue" | "baseUnitPrice" | "directUnitCost" | "supplierUnitPrice" | "saleBaseMode" | "supplierNameSnapshot" | "supplierCodeSnapshot" | "internalReference" | "internalNotes"> & { directTotalCost?: string | null };
 type DetailDiscount = { id?: string; percentage: string };
 type DetailLabor = { id?: string; employeeId?: string; employeeNameSnapshot: string; hours: string; costRateSnapshot: string; saleRateSnapshot: string };
 type DetailInput = { installationId: string; quoteId: string; expectedRevision: number; line: DetailLine; discounts: DetailDiscount[]; laborEntries: DetailLabor[] };
-function pricedDetails(input: DetailInput): DetailLine {
-  if (input.line.saleRule !== "add_percentage" && input.line.saleRule !== "add_euros_per_unit") return input.line;
-  return { ...input.line, baseUnitPrice: resolveSaleBaseUnitPrice(input.line.saleBaseMode ?? "net_cost", input.line.directUnitCost, input.line.supplierUnitPrice, input.discounts).toFixed(6) };
+function pricedDetails(input: DetailInput): Omit<DetailLine, "directTotalCost"> {
+  const line = resolveDirectTotalCost(input.line);
+  if (line.saleRule !== "add_percentage" && line.saleRule !== "add_euros_per_unit") return line;
+  return { ...line, baseUnitPrice: resolveSaleBaseUnitPrice(line.saleBaseMode ?? "net_cost", line.directUnitCost, line.supplierUnitPrice, input.discounts).toFixed(6) };
 }
 
 export async function loadQuoteCalculation(tx: QueryExecutor, quoteId: string) {
@@ -107,7 +108,7 @@ export async function loadQuoteCalculation(tx: QueryExecutor, quoteId: string) {
 export async function finalizeQuoteMutation(tx: QueryExecutor, quoteId: string, installationId: string, expectedRevision: number, action: string) {
   const [current] = await tx.select().from(quotes).where(and(eq(quotes.id, quoteId), eq(quotes.installationId, installationId))).limit(1);
   if (!current) throw new QuoteNotFoundError(quoteId);
-  if (current.accessMode === "read_only" || current.status === "archived") throw new ReadOnlyQuoteError(quoteId);
+  if (current.accessMode === "read_only" || current.status === "archived" || Boolean(current.deletedAt)) throw new ReadOnlyQuoteError(quoteId);
   if (current.revision !== expectedRevision) throw new RevisionConflictError("quote", quoteId);
   const nextRevision = expectedRevision + 1;
   const calculation = await loadQuoteCalculation(tx, quoteId);
@@ -154,7 +155,7 @@ export function createQuoteWorkflowRepository(db: Database) {
         if ((input.laborEntries.length && input.lineType !== "labor") || (input.discounts.length && input.lineType !== "material")) throw new Error("invalid_line_details");
         const [quote] = await tx.select().from(quotes).where(and(eq(quotes.id, input.quoteId), eq(quotes.installationId, input.installationId))).limit(1);
         if (!quote) throw new QuoteNotFoundError(input.quoteId);
-        if (quote.accessMode === "read_only" || quote.status === "archived") throw new ReadOnlyQuoteError(input.quoteId);
+        if (quote.accessMode === "read_only" || quote.status === "archived" || Boolean(quote.deletedAt)) throw new ReadOnlyQuoteError(input.quoteId);
         if (quote.revision !== input.expectedRevision) throw new RevisionConflictError("quote", input.quoteId);
         const [material] = input.catalogMaterialId ? await tx.select().from(catalogMaterials).where(and(eq(catalogMaterials.id, input.catalogMaterialId), eq(catalogMaterials.installationId, input.installationId))).limit(1) : [];
         if (input.catalogMaterialId && !material) throw new Error("catalog_material_not_found");
@@ -171,7 +172,7 @@ export function createQuoteWorkflowRepository(db: Database) {
         await assertQuote(tx, input);
         const [quote] = await tx.select().from(quotes).where(and(eq(quotes.id, input.quoteId), eq(quotes.installationId, input.installationId))).limit(1);
         if (!quote) throw new QuoteNotFoundError(input.quoteId);
-        if (quote.accessMode === "read_only" || quote.status === "archived") throw new ReadOnlyQuoteError(input.quoteId);
+        if (quote.accessMode === "read_only" || quote.status === "archived" || Boolean(quote.deletedAt)) throw new ReadOnlyQuoteError(input.quoteId);
         if (quote.revision !== input.expectedRevision) throw new RevisionConflictError("quote", input.quoteId);
         const [line] = await tx.select().from(quoteLines).where(and(eq(quoteLines.id, input.lineId), eq(quoteLines.quoteId, input.quoteId))).limit(1);
         if (!line) throw new Error("quote_line_not_found");
@@ -249,7 +250,24 @@ export function createQuoteWorkflowRepository(db: Database) {
       });
     },
     async updateLine(input: { installationId: string; quoteId: string; expectedRevision: number; lineId: string; changes: Record<string, unknown> }) {
-      return db.transaction(async (tx) => { await assertQuote(tx, input); await assertLine(tx, input.quoteId, input.lineId); onlyFields(input.changes, ["description", "unit", "quantity", "igicRate", "saleRule", "saleRuleValue", "saleBaseMode", "baseUnitPrice", "directUnitCost", "supplierUnitPrice", "supplierNameSnapshot", "supplierCodeSnapshot", "internalReference", "internalNotes", "eligibleForPriceAllocation"]); await tx.update(quoteLines).set({ ...input.changes, updatedAt: new Date() }).where(and(eq(quoteLines.id, input.lineId), eq(quoteLines.quoteId, input.quoteId))); return finalize(tx, input.quoteId, input.installationId, input.expectedRevision, "quote.line.updated"); });
+      return db.transaction(async (tx) => {
+        await assertQuote(tx, input);
+        await assertLine(tx, input.quoteId, input.lineId);
+        onlyFields(input.changes, ["description", "unit", "quantity", "igicRate", "saleRule", "saleRuleValue", "saleBaseMode", "baseUnitPrice", "directUnitCost", "directTotalCost", "supplierUnitPrice", "supplierNameSnapshot", "supplierCodeSnapshot", "internalReference", "internalNotes", "eligibleForPriceAllocation"]);
+        let changes: Record<string, unknown> = input.changes;
+        if (input.changes.directTotalCost !== undefined && input.changes.directTotalCost !== null) {
+          // Coste total editado: el dominio deriva el coste unitario con la cantidad resultante.
+          const [line] = await tx.select({ quantity: quoteLines.quantity, type: quoteLines.type }).from(quoteLines).where(eq(quoteLines.id, input.lineId)).limit(1);
+          if (line?.type === "labor") throw new PricingValidationError("labor_cost_comes_from_entries");
+          changes = resolveDirectTotalCost({ ...input.changes, quantity: input.changes.quantity ?? line!.quantity });
+          if (input.changes.quantity === undefined) delete changes.quantity;
+        } else {
+          const { directTotalCost: _ignored, ...rest } = input.changes;
+          changes = rest;
+        }
+        await tx.update(quoteLines).set({ ...changes, updatedAt: new Date() }).where(and(eq(quoteLines.id, input.lineId), eq(quoteLines.quoteId, input.quoteId)));
+        return finalize(tx, input.quoteId, input.installationId, input.expectedRevision, "quote.line.updated");
+      });
     },
     async deleteLine(input: { installationId: string; quoteId: string; expectedRevision: number; lineId: string }) {
       return db.transaction(async (tx) => {

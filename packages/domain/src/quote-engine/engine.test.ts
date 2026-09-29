@@ -6,7 +6,9 @@ import {
   calculateLine,
   calculateQuote,
   resolveSaleBaseUnitPrice,
+  unitCostFromLineTotal,
 } from "./engine.js";
+import { money } from "../money/money.js";
 
 const value = (input: { type: "unit_price" | "fixed_line_total" | "add_euros_per_unit" | "add_percentage"; value: string; baseUnitPrice?: string }) => ({
   id: "line-1",
@@ -124,5 +126,20 @@ describe("quote engine", () => {
     expect(allocations.get("a")?.toFixed(2)).toBe("0.01");
     expect(allocations.get("b")?.toFixed(2)).toBe("0.01");
     expect(allocations.has("internal")).toBe(false);
+  });
+});
+
+describe("unit cost from a line total", () => {
+  it("derives the unit cost so the rounded line cost equals the entered total", () => {
+    for (const [total, quantity] of [["50", "10"], ["10", "3"], ["99.99", "7"], ["1234.56", "0.5"], ["0", "4"]] as const) {
+      const unit = unitCostFromLineTotal(total, quantity);
+      expect(unit.decimalPlaces()).toBeLessThanOrEqual(6);
+      const line = calculateLine({ id: "l", type: "material", quantity, igicRate: "7", directUnitCost: unit.toString(), saleRule: { type: "unit_price", value: "0" } } as never);
+      expect(line.cost.toFixed(2)).toBe(money(total).toFixed(2));
+    }
+  });
+  it("rejects a zero quantity and negative totals", () => {
+    expect(() => unitCostFromLineTotal("10", "0")).toThrow("quantity_required_for_total");
+    expect(() => unitCostFromLineTotal("-1", "2")).toThrow("invalid_unit_cost");
   });
 });
