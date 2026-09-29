@@ -107,3 +107,74 @@ input[aria-invalid="true"] {
 .summary-cost { color: var(--danger); }
 .summary-profit { color: var(--profit-positive); }
 .summary-loss { color: var(--profit-negative); }
+
+/* v1.1 · Número editable, papelera y diálogos de ciclo de vida. */
+.quote-reference {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reference-edit {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground-soft);
+  cursor: pointer;
+}
+
+.reference-edit:hover,
+.reference-edit:focus-visible {
+  border-color: var(--border);
+  background: var(--surface-hover);
+  color: var(--foreground);
+}
+
+.reference-edit svg {
+  width: 14px;
+  height: 14px;
+}
+
+.badge-trash {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.badge-trash svg {
+  width: 13px;
+  height: 13px;
+}
+
+.dropdown-separator {
+  height: 1px;
+  margin: 4px;
+  background: var(--border);
+}
+
+.notice-actions {
+  align-items: center;
+}
+
+.notice-actions > .button {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.lifecycle-dialog {
+  display: grid;
+  gap: 12px;
+}
+
+.dialog-text {
+  margin: 0;
+  color: var(--foreground-muted);
+  line-height: 1.5;
+}

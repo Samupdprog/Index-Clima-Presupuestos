@@ -6,6 +6,7 @@ import { DropdownMenu } from "radix-ui";
 import { AdjustmentDialog } from "./adjustment-dialog";
 import { ReviewDocument } from "./review-document";
 import { InternalReview } from "./internal-review";
+import { QuoteLifecycleDialog, type LifecycleAction } from "./quote-lifecycle";
 import { ConceptWorkspace } from "./editor/concept-workspace";
 import { AnimatePresence, motion, Reorder, useDragControls, useReducedMotion } from "motion/react";
 import {
@@ -32,6 +33,7 @@ import {
   Trash2,
   UserRound,
   ChartColumn,
+  ArchiveRestore,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { QuoteCommand } from "@quotes/contracts";
@@ -148,7 +150,8 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
     }
   }, [push, quoteId, refreshQuote]);
 
-  const readOnly = quote?.accessMode === "read_only" || quote?.status === "archived";
+  const readOnly = quote?.accessMode === "read_only" || quote?.status === "archived" || Boolean(quote?.deletedAt);
+  const [lifecycle, setLifecycle] = useState<LifecycleAction | null>(null);
   const calculationByLine = useMemo(() => {
     const map = new Map<string, CalculatedLine>();
     quote?.calculation?.lines.forEach((line) => map.set(line.quoteLineId ?? line.id ?? "", line));
@@ -216,12 +219,14 @@ export function QuoteEditor({ quoteId }: { quoteId: string }) {
       <div className="editor-header">
         <div className="breadcrumb"><Link href="/presupuestos"><ArrowLeft />Presupuestos</Link><ChevronRight /><span>{quote.reference}</span></div>
         <div className="editor-title-row">
-          <div><span className="quote-reference">{quote.reference}</span><h1 className="editor-title">{quote.title}</h1><div className="editor-meta"><span>{quote.clientSnapshot?.name ?? "Sin cliente"}</span><span>·</span><QuoteStatusControl quote={quote} disabled={readOnly} onChange={(status) => execute({ type: "changeQuoteStatus", expectedRevision: quote.revision, status }, `Estado cambiado a ${statusLabel(status).toLowerCase()}`)} /><OriginBadge origin={quote.origin} />{quote.holdedEstimateId ? <span className="badge badge-origin">En Holded</span> : null}{readOnly ? <span className="badge badge-readonly">Solo lectura</span> : null}<SaveIndicator state={saveState} /></div></div>
+          <div><span className="quote-reference">{quote.reference}{!readOnly ? <button type="button" className="reference-edit" aria-label="Cambiar número del presupuesto" title="Cambiar número" onClick={() => setLifecycle("rename")}><PencilLine /></button> : null}</span><h1 className="editor-title">{quote.title}</h1><div className="editor-meta"><span>{quote.clientSnapshot?.name ?? "Sin cliente"}</span><span>·</span><QuoteStatusControl quote={quote} disabled={readOnly} onChange={(status) => execute({ type: "changeQuoteStatus", expectedRevision: quote.revision, status }, `Estado cambiado a ${statusLabel(status).toLowerCase()}`)} /><OriginBadge origin={quote.origin} />{quote.holdedEstimateId ? <span className="badge badge-origin">En Holded</span> : null}{readOnly ? <span className="badge badge-readonly">Solo lectura</span> : null}<SaveIndicator state={saveState} /></div></div>
           <div className="header-actions"><RippleButton variant="secondary" onClick={() => setWorkflowStep(5)}><Eye />Revisión</RippleButton><RippleButton variant="secondary" onClick={() => setWorkflowStep(4)} disabled={quote.lines.length === 0}><CircleDollarSign />Precio final</RippleButton></div>
         </div>
       </div>
       {quote.accessMode === "read_only" ? <div className="notice notice-warning" style={{ marginBottom: 16 }}><AlertTriangle /><span><strong>Generado desde Holded.</strong> Este presupuesto es de solo lectura. Duplícalo desde el listado para crear una versión editable.</span></div> : null}
       {quote.status === "archived" ? <div className="notice notice-warning" style={{ marginBottom: 16 }}><AlertTriangle /><span>Este presupuesto está archivado y no admite cambios.</span></div> : null}
+      {quote.deletedAt ? <div className="notice notice-danger notice-actions" style={{ marginBottom: 16 }}><Trash2 /><span><strong>En la papelera.</strong> No admite cambios hasta que lo restaures.</span><RippleButton variant="secondary" size="sm" onClick={() => setLifecycle("restore")}><ArchiveRestore />Restaurar</RippleButton></div> : null}
+      <QuoteLifecycleDialog quote={lifecycle ? quote : null} action={lifecycle} onClose={() => setLifecycle(null)} onDone={({ action, quote: updated }) => { setLifecycle(null); if (updated) setQuote({ ...quote, ...updated, lines: quote.lines }); void refreshQuote(); push(action === "rename" ? "Número actualizado" : "Presupuesto restaurado"); }} />
       <WorkflowSteps current={workflowStep} quote={quote} onSelect={setWorkflowStep} />
       <AnimatePresence mode="wait" initial={false}>
         <motion.div key={workflowStep} className="workflow-stage" initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduceMotion ? 0 : -5 }} transition={{ duration: reduceMotion ? 0 : .2 }}>

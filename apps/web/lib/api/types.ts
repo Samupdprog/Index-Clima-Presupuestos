@@ -121,6 +121,10 @@ export interface QuoteRecord {
   accessMode: QuoteAccessMode;
   status: QuoteStatus;
   holdedEstimateId?: string | null;
+  holdedLastSyncedAt?: string | null;
+  holdedSyncedReference?: string | null;
+  /** En la papelera: oculto y de solo lectura hasta restaurarlo. */
+  deletedAt?: string | null;
   revision: number;
   createdAt: string;
   updatedAt: string;

@@ -13,8 +13,10 @@ import {
   FilePlus2,
   MoreHorizontal,
   PenLine,
+  Hash,
   Search,
   Sparkles,
+  Trash2,
   UserPlus,
 } from "lucide-react";
 import {
@@ -36,13 +38,15 @@ import type {
   QuoteStatus,
 } from "../../lib/api/types";
 import { formatDate, formatMoney } from "../../lib/format";
+import { canDeletePermanently, QuoteLifecycleDialog, type LifecycleAction } from "./quote-lifecycle";
 
-const filters: Array<{ value: "all" | QuoteStatus; label: string }> = [
+const filters: Array<{ value: "all" | "trash" | QuoteStatus; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "draft", label: "Borradores" },
   { value: "ready_for_review", label: "Por revisar" },
   { value: "finalized", label: "Finalizados" },
   { value: "archived", label: "Archivados" },
+  { value: "trash", label: "Papelera" },
 ];
 
 export function QuotesPage() {
@@ -54,16 +58,16 @@ export function QuotesPage() {
   const [filter, setFilter] =
     useState<(typeof filters)[number]["value"]>("all");
   const [createOpen, setCreateOpen] = useState(false);
-  const [archiveTarget, setArchiveTarget] = useState<QuoteRecord | null>(null);
+  const [lifecycle, setLifecycle] = useState<{ quote: QuoteRecord; action: LifecycleAction } | null>(null);
   const { toasts, push } = useToasts();
 
   const load = useCallback(
-    async (search = query) => {
+    async (search = query, scope: "active" | "trash" = filter === "trash" ? "trash" : "active") => {
       setLoading(true);
       setError(null);
 
       try {
-        const base = await api.searchQuotes(search);
+        const base = await api.searchQuotes(search, scope);
 
         const details = await Promise.all(
           base.map(async (quote) => {
@@ -86,7 +90,7 @@ export function QuotesPage() {
         setLoading(false);
       }
     },
-    [query],
+    [query, filter],
   );
 
   useEffect(() => {
@@ -96,12 +100,12 @@ export function QuotesPage() {
   useEffect(() => {
     const id = window.setTimeout(() => void load(query), 260);
     return () => window.clearTimeout(id);
-  }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [query, filter === "trash"]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visible = useMemo(
     () =>
       quotes.filter(
-        (quote) => filter === "all" || quote.status === filter,
+        (quote) => filter === "all" || filter === "trash" || quote.status === filter,
       ),
     [quotes, filter],
   );
@@ -151,23 +155,13 @@ export function QuotesPage() {
     }
   }
 
-  async function archive() {
-    if (!archiveTarget) return;
-
-    try {
-      await api.archiveQuote(archiveTarget.id, archiveTarget.revision);
-      setArchiveTarget(null);
-      push("Presupuesto archivado");
-      await load();
-    } catch (cause) {
-      push(
-        cause instanceof ApiError && cause.isRevisionConflict
-          ? "El presupuesto cambió; recarga antes de archivarlo"
-          : "No se pudo archivar",
-        "error",
-      );
-    }
-  }
+  const lifecycleMessages: Record<LifecycleAction, string> = {
+    rename: "Número actualizado",
+    archive: "Presupuesto archivado",
+    trash: "Movido a la papelera",
+    restore: "Presupuesto restaurado",
+    delete: "Presupuesto eliminado definitivamente",
+  };
 
   return (
     <div className="page">
@@ -297,7 +291,7 @@ export function QuotesPage() {
                   </td>
 
                   <td>
-                    <StatusBadge status={quote.status} />
+                    {quote.deletedAt ? <span className="badge badge-trash"><Trash2 />Papelera</span> : <StatusBadge status={quote.status} />}
                   </td>
 
                   <td>
@@ -348,13 +342,38 @@ export function QuotesPage() {
                             Duplicar
                           </DropdownMenu.Item>
 
-                          {quote.status !== "archived" ? (
-                            <DropdownMenu.Item
-                              className="dropdown-item danger"
-                              onSelect={() => setArchiveTarget(quote)}
-                            >
+                          {!quote.deletedAt && quote.status !== "archived" ? (
+                            <DropdownMenu.Item className="dropdown-item" onSelect={() => setLifecycle({ quote, action: "rename" })}>
+                              <Hash />
+                              Cambiar número
+                            </DropdownMenu.Item>
+                          ) : null}
+
+                          <DropdownMenu.Separator className="dropdown-separator" />
+
+                          {!quote.deletedAt && quote.status !== "archived" ? (
+                            <DropdownMenu.Item className="dropdown-item" onSelect={() => setLifecycle({ quote, action: "archive" })}>
                               <Archive />
                               Archivar
+                            </DropdownMenu.Item>
+                          ) : null}
+
+                          {quote.deletedAt ? (
+                            <DropdownMenu.Item className="dropdown-item" onSelect={() => setLifecycle({ quote, action: "restore" })}>
+                              <ArchiveRestore />
+                              Restaurar
+                            </DropdownMenu.Item>
+                          ) : (
+                            <DropdownMenu.Item className="dropdown-item danger" onSelect={() => setLifecycle({ quote, action: "trash" })}>
+                              <Trash2 />
+                              Mover a la papelera
+                            </DropdownMenu.Item>
+                          )}
+
+                          {canDeletePermanently(quote) ? (
+                            <DropdownMenu.Item className="dropdown-item danger" onSelect={() => setLifecycle({ quote, action: "delete" })}>
+                              <Trash2 />
+                              Eliminar definitivamente
                             </DropdownMenu.Item>
                           ) : null}
                         </DropdownMenu.Content>
@@ -377,43 +396,16 @@ export function QuotesPage() {
         }}
       />
 
-      <Dialog
-        open={Boolean(archiveTarget)}
-        onOpenChange={(open) => {
-          if (!open) setArchiveTarget(null);
+      <QuoteLifecycleDialog
+        quote={lifecycle?.quote ?? null}
+        action={lifecycle?.action ?? null}
+        onClose={() => setLifecycle(null)}
+        onDone={({ action }) => {
+          setLifecycle(null);
+          push(lifecycleMessages[action]);
+          void load();
         }}
-      >
-        <DialogContent
-          title="Archivar presupuesto"
-          description={`Podrás seguir consultando ${
-            archiveTarget?.reference ?? "este presupuesto"
-          }, pero quedará en modo archivado.`}
-          footer={
-            <>
-              <DialogClose asChild>
-                <RippleButton variant="secondary">Cancelar</RippleButton>
-              </DialogClose>
-
-              <RippleButton
-                variant="danger"
-                onClick={() => void archive()}
-              >
-                <Archive />
-                Archivar
-              </RippleButton>
-            </>
-          }
-        >
-          <p
-            style={{
-              margin: 0,
-              color: "var(--foreground-muted)",
-            }}
-          >
-            Esta acción no elimina los datos.
-          </p>
-        </DialogContent>
-      </Dialog>
+      />
 
       <ToastViewport toasts={toasts} />
     </div>

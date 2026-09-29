@@ -66,10 +66,14 @@ export interface HoldedHealth {
 }
 
 export const api = {
-  searchQuotes: (q = "") => request<QuoteRecord[]>(query("/quotes", { q })),
+  searchQuotes: (q = "", scope: "active" | "trash" = "active") => request<QuoteRecord[]>(query("/quotes", { q, scope })),
   getQuote: (id: string) => request<QuoteRecord>(`/quotes/${id}`),
   createQuote: (data: CreateQuoteRequest) => request<QuoteRecord>("/quotes", { method: "POST", body: JSON.stringify(data) }),
   duplicateQuote: (id: string, expectedRevision: number) => request<QuoteRecord>(`/quotes/${id}/duplicate`, { method: "POST", body: JSON.stringify({ expectedRevision }) }),
+  changeQuoteReference: (id: string, expectedRevision: number, reference: string) => request<QuoteRecord>(`/quotes/${id}/commands`, { method: "POST", body: JSON.stringify({ type: "changeQuoteReference", expectedRevision, reference }) }),
+  trashQuote: (id: string, expectedRevision: number) => request<QuoteRecord>(`/quotes/${id}/commands`, { method: "POST", body: JSON.stringify({ type: "trashQuote", expectedRevision }) }),
+  restoreQuote: (id: string, expectedRevision: number) => request<QuoteRecord>(`/quotes/${id}/commands`, { method: "POST", body: JSON.stringify({ type: "restoreQuote", expectedRevision }) }),
+  deleteQuotePermanently: (id: string, expectedRevision: number) => request<{ deleted: true; reference: string }>(`/quotes/${id}/commands`, { method: "POST", body: JSON.stringify({ type: "deleteQuotePermanently", expectedRevision, confirm: true }) }),
   archiveQuote: (id: string, expectedRevision: number) => request<QuoteRecord>(`/quotes/${id}/commands`, { method: "POST", body: JSON.stringify({ type: "archiveQuote", expectedRevision }) }),
   exportQuoteToHolded: (id: string, expectedRevision: number) => request<QuoteRecord>(`/quotes/${id}/holded`, { method: "POST", body: JSON.stringify({ expectedRevision }) }),
   command: (id: string, command: QuoteCommand) => request<{ quote: QuoteRecord; calculation: QuoteRecord["calculation"] }>(`/quotes/${id}/commands`, { method: "POST", body: JSON.stringify(command) }),
