@@ -62,7 +62,7 @@ curl -fsS https://mcp.example.com/.well-known/oauth-protected-resource/mcp
 curl -fsS https://mcp.example.com/.well-known/oauth-authorization-server
 ```
 
-Abre `https://APP_HOST`. El navegador pedirá `APP_ACCESS_USERNAME` y `APP_ACCESS_PASSWORD`, que puedes consultar con `grep ^APP_ACCESS_PASSWORD= .env`.
+Abre `https://APP_HOST`. Aparece la pantalla de inicio de sesión: usuario `APP_ACCESS_USERNAME` y contraseña `APP_ACCESS_PASSWORD` (consúltala con `grep ^APP_ACCESS_PASSWORD= .env`). El dispositivo queda recordado 30 días con una cookie firmada `HttpOnly`, `Secure` y `SameSite=Lax` que se renueva sola con el uso; "Cerrar sesión" la borra. La contraseña nunca se guarda en el navegador. Cambiar `APP_ACCESS_PASSWORD` (o `APP_SESSION_SECRET`) cierra todas las sesiones abiertas. HTTP Basic sigue aceptándose para herramientas como `curl`.
 
 ## Holded
 

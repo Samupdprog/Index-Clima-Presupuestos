@@ -131,9 +131,11 @@ services:
       PORT: "3000"
       INTERNAL_API_URL: http://api:4000
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
-      # HTTP Basic delante de la web; vacío = desactivado (obligatorio en prod).
+      # Login web con sesión de 30 días; vacío = desactivado (obligatorio en prod).
       APP_ACCESS_USERNAME: ${APP_ACCESS_USERNAME:-index-clima}
       APP_ACCESS_PASSWORD: ${APP_ACCESS_PASSWORD:-}
+      # Opcional: firma de la cookie de sesión. Cambiarlo cierra todas las sesiones.
+      APP_SESSION_SECRET: ${APP_SESSION_SECRET:-}
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
     networks:

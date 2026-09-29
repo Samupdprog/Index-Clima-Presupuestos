@@ -152,5 +152,6 @@ Generador operativo para Index Clima:
 - Revisiones con bloqueo optimista, revisión previa a la exportación, PDF y exportación idempotente al mismo Estimate de Holded.
 - MCP para IA con scopes, que opera el Generador y consulta en solo lectura los Estimates existentes en Holded ([SPEC-011](docs/specs/011-mcp-holded-estimates.md)).
 - Conexión de ChatGPT y Claude mediante OAuth 2.1 con Authorization Server integrado ([guía](docs/operations/chatgpt-mcp-oauth.md), [SPEC-012](docs/specs/012-mcp-oauth.md)).
+- v1.1: login persistente de 30 días, decimales en formato español, coste por unidad o total, resultado interno en Revisión, número editable, papelera y mantenimiento del catálogo (también por MCP) con actualización masiva previsualizada ([SPEC-013](docs/specs/013-v1.1-ux-catalog-lifecycle.md), [CHANGELOG](CHANGELOG.md)).
 
 El desarrollo funcional continúa mediante especificaciones SDD pequeñas y verificables en `docs/specs/`.

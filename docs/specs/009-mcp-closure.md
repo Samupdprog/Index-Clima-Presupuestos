@@ -20,7 +20,7 @@ Líneas compuestas conservan lista ordenada de descuentos y entradas de trabajo.
 
 ## Ayuda a la IA
 
-Instrucciones de servidor, recurso `generator://guide` y prompt de flujo de presupuesto explican descubrimiento, revisión, datos incompletos, extracción frente a cálculo, revisiones, preview, conflictos y exportación. Borrado y exportación solo ante petición del usuario. Catálogos disponibles mediante lectura, sin escritura indirecta.
+Instrucciones de servidor, recurso `generator://guide` y prompt de flujo de presupuesto explican descubrimiento, revisión, datos incompletos, extracción frente a cálculo, revisiones, preview, conflictos y exportación. Borrado y exportación solo ante petición del usuario. Añadir una línea nunca modifica el catálogo; el catálogo solo cambia con sus herramientas explícitas (`create_*`, `update_*`, `archive_catalog_item`, `restore_catalog_item`) y la actualización masiva en dos fases `preview_material_import` → aprobación del usuario → `apply_material_import`. El número, la papelera y el borrado definitivo (`confirm: true`) se describen en [SPEC-013](013-v1.1-ux-catalog-lifecycle.md).
 
 ## Consulta de Holded
 

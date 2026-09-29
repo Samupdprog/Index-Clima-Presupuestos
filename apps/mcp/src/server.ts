@@ -53,7 +53,7 @@ export function profileFor(principal: McpPrincipal) {
 }
 
 export function createGeneratorServer(api: GeneratorApi, principal: McpPrincipal, context: ServerContext = { authMode: "bearer", resourceMetadataUrl: "" }) {
-  const server = new McpServer({ name: "index-clima-presupuestos", version: "0.3.0" }, { instructions: GENERATOR_GUIDE });
+  const server = new McpServer({ name: "index-clima-presupuestos", version: "0.4.0" }, { instructions: GENERATOR_GUIDE });
   const oauth = context.authMode !== "bearer";
   const schemes = new Map<string, ReturnType<typeof securitySchemesFor>>();
   for (const tool of generatorTools) {
