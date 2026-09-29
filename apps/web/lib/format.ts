@@ -1,8 +1,10 @@
-import { money } from "@quotes/domain";
+import { formatDecimalForInput } from "./decimal";
 
-export const moneyFormatter = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", minimumFractionDigits: 2 });
-const wholeMoneyFormatter = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", minimumFractionDigits: 0, maximumFractionDigits: 0 });
-export const numberFormatter = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2 });
+// Siempre con separador de miles (es-ES no agrupa por defecto números de 4 cifras: 1234 → 1.234).
+const grouping = { useGrouping: "always" } as unknown as Intl.NumberFormatOptions;
+export const moneyFormatter = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", minimumFractionDigits: 2, ...grouping });
+const wholeMoneyFormatter = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", minimumFractionDigits: 0, maximumFractionDigits: 0, ...grouping });
+export const numberFormatter = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2, ...grouping });
 export const dateFormatter = new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short", year: "numeric" });
 
 export function formatMoney(value: string | number | null | undefined) {
@@ -26,11 +28,9 @@ export function formatMoneyCompact(value: string | number | null | undefined) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? (Number.isInteger(numeric) ? wholeMoneyFormatter : moneyFormatter).format(numeric) : "—";
 }
-/** Input text is normalized without rounding or changing the canonical DB value. */
+/** Valor editable sin redondear ni cambiar el dato canónico (ver lib/decimal.ts). */
 export function formatDecimalInput(value: string | number | null | undefined) {
-  if (value === null || value === undefined || value === "") return "";
-  try { return money(String(value).trim().replace(",", ".")).toString().replace(".", ","); }
-  catch { return ""; }
+  return formatDecimalForInput(value);
 }
 export function formatAdjustment(adjustment: { scope: "line" | "selection" | "quote"; mode: "amount" | "percentage" | "target_total"; value: string; targetLineIds?: string[] }) {
   const scope = adjustment.scope === "quote" ? "Presupuesto completo" : adjustment.scope === "line" ? "Una línea" : "Selección de líneas";

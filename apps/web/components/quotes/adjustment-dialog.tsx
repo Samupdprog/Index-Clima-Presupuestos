@@ -7,6 +7,8 @@ import type { QuoteRecord } from "../../lib/api/types";
 import { formatAdjustment, formatMoney, formatMoneyCompact, formatNumber, formatPercentage } from "../../lib/format";
 import { Dialog, DialogClose, DialogContent } from "../animate-ui/overlay";
 import { RippleButton } from "../animate-ui/ripple-button";
+import { decimalForApi } from "../../lib/decimal";
+import { DecimalInput } from "../ui/decimal-input";
 
 export function AdjustmentDialog({ open, onOpenChange, quote, execute }: { open: boolean; onOpenChange: (open: boolean) => void; quote: QuoteRecord; execute: (command: QuoteCommand, message?: string) => Promise<QuoteRecord> }) {
   const [scope, setScope] = useState<"quote" | "selection">("quote");
@@ -16,7 +18,7 @@ export function AdjustmentDialog({ open, onOpenChange, quote, execute }: { open:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [response, setResponse] = useState<{ key: string; preview: PriceAdjustmentPreview } | null>(null);
-  const input: PreviewPriceAdjustmentRequest = { expectedRevision: quote.revision, scope, mode, value: value.trim().replace(",", ".") || "0", ...(scope === "selection" ? { targetLineIds: selected } : {}) };
+  const input: PreviewPriceAdjustmentRequest = { expectedRevision: quote.revision, scope, mode, value: decimalForApi(value, "0"), ...(scope === "selection" ? { targetLineIds: selected } : {}) };
   const key = JSON.stringify(input);
   const preview = response?.key === key ? response.preview : null;
   useEffect(() => { if (open) { setValue(""); setScope("quote"); setSelected([]); setError(""); setResponse(null); } }, [open]);
@@ -47,7 +49,7 @@ export function AdjustmentDialog({ open, onOpenChange, quote, execute }: { open:
     <form id="adjustment-form" onSubmit={submit} className="form-grid">
       <label className="field"><span className="field-label">Aplicar a</span><select className="select" value={scope} onChange={(event) => setScope(event.target.value as typeof scope)}><option value="quote">Presupuesto completo</option><option value="selection">Selección de líneas</option></select></label>
       <label className="field"><span className="field-label">Tipo de ajuste</span><select className="select" value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}><option value="amount">Sumar €</option><option value="percentage">Aumentar %</option><option value="target_total">Fijar total sin IGIC</option></select></label>
-      <label className="field span-2"><span className="field-label">Valor</span><input className="input" value={value} onChange={(event) => setValue(event.target.value)} inputMode="decimal" placeholder={mode === "percentage" ? "Ej. 5" : "Ej. 300"} /></label>
+      <label className="field span-2"><span className="field-label">Valor</span><DecimalInput className="input" value={value} onValueChange={setValue} placeholder={mode === "percentage" ? "Ej. 5" : "Ej. 300"} /></label>
       {scope === "selection" ? <fieldset className="span-2 adjustment-selection"><legend>Líneas incluidas</legend>{quote.lines.filter((line) => !["title", "adjustment"].includes(line.type)).map((line) => <label key={line.id}><input type="checkbox" checked={selected.includes(line.id)} onChange={(event) => setSelected((ids) => event.target.checked ? [...ids, line.id] : ids.filter((id) => id !== line.id))} />{line.description}</label>)}</fieldset> : null}
       {error ? <p role="alert" className="error-text span-2">{error}</p> : null}
       {!preview && !error ? <p role="status" className="span-2">{scope === "selection" && !selected.length ? "Selecciona al menos una línea." : "Calculando previsualización…"}</p> : null}

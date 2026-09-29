@@ -43,6 +43,8 @@ import type {
   TravelRecord,
 } from "../../../lib/api/types";
 import { formatDecimalInput, formatMoney, formatNumber } from "../../../lib/format";
+import { parseDecimalText } from "../../../lib/decimal";
+import { DecimalInput } from "../../ui/decimal-input";
 import styles from "./concept-workspace.module.css";
 import { useLinePreview } from "./use-line-preview";
 
@@ -702,9 +704,9 @@ function LaborComposer({
                 description: `${formatMoney(item.costRate)}/h coste · ${formatMoney(item.saleRate)}/h venta`,
               }))}
             />
-            <input value={row.hours} disabled={readOnly} inputMode="decimal" onChange={(event) => updateRow(index, { hours: event.target.value })} aria-label="Horas" />
-            <input value={row.costRate} disabled={readOnly} inputMode="decimal" onChange={(event) => updateRow(index, { costRate: event.target.value })} aria-label="Coste por hora" />
-            <input value={row.saleRate} disabled={readOnly} inputMode="decimal" onChange={(event) => updateRow(index, { saleRate: event.target.value })} aria-label="Precio cliente por hora" />
+            <DecimalInput value={row.hours} disabled={readOnly} aria-label="Horas" onValueChange={(value) => updateRow(index, { hours: value })} />
+            <DecimalInput value={row.costRate} disabled={readOnly} aria-label="Coste por hora" onValueChange={(value) => updateRow(index, { costRate: value })} />
+            <DecimalInput value={row.saleRate} disabled={readOnly} aria-label="Precio cliente por hora" onValueChange={(value) => updateRow(index, { saleRate: value })} />
             <button type="button" aria-label="Quitar empleado" disabled={readOnly || rows.length === 1} onClick={() => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}><Trash2 /></button>
           </div>
         ))}
@@ -846,7 +848,7 @@ function ConceptLineRow({
             <InlineEditor
               disabled={readOnly}
               type="number"
-              value={costUnit ?? ""}
+              value={toInputDecimal(costUnit)}
               display={<small>{formatMoney(costUnit)} / {line.unit || "ud"}</small>}
               ariaLabel="Coste por unidad"
               onSave={(value) => commitInline("costUnit", value)}
@@ -860,7 +862,7 @@ function ConceptLineRow({
           <InlineEditor
             disabled={readOnly || line.type === "labor"}
             type="number"
-            value={saleTotal ?? ""}
+            value={toInputDecimal(saleTotal)}
             display={<strong>{formatMoney(saleTotal)} <em>sin IGIC</em></strong>}
             ariaLabel="Precio cliente total sin IGIC"
             onSave={(value) => commitInline("saleTotal", value)}
@@ -870,7 +872,7 @@ function ConceptLineRow({
               <InlineEditor
                 disabled={readOnly}
                 type="number"
-                value={saleUnit ?? ""}
+                value={toInputDecimal(saleUnit)}
                 display={<small>{formatMoney(saleUnit)} / {line.unit || "ud"}</small>}
                 ariaLabel="Precio cliente por unidad sin IGIC"
                 onSave={(value) => commitInline("saleUnit", value)}
@@ -1207,7 +1209,7 @@ function AdvancedLineSheet({
               </Field>
               {activeLine.type !== "labor" ? (
                 <>
-                  <Field label="Cantidad"><input value={form.quantity} disabled={readOnly} inputMode="decimal" onChange={(event) => set("quantity", event.target.value)} /></Field>
+                  <Field label="Cantidad"><DecimalInput value={form.quantity} disabled={readOnly} onValueChange={(value) => set("quantity", value)} /></Field>
                   <Field label="Unidad"><input value={form.unit} disabled={readOnly} onChange={(event) => set("unit", event.target.value)} /></Field>
                 </>
               ) : null}
@@ -1236,9 +1238,9 @@ function AdvancedLineSheet({
                       placeholder="Buscar empleado…"
                       options={employees.filter((item) => item.active).map((item) => ({ value: item.id, label: item.name, description: `${formatMoney(item.costRate)}/h coste · ${formatMoney(item.saleRate)}/h venta` }))}
                     />
-                    <input value={row.hours} disabled={readOnly} inputMode="decimal" aria-label="Horas" onChange={(event) => patchLaborRow(index, { hours: event.target.value })} />
-                    <input value={row.costRate} disabled={readOnly} inputMode="decimal" aria-label="Coste por hora" onChange={(event) => patchLaborRow(index, { costRate: event.target.value })} />
-                    <input value={row.saleRate} disabled={readOnly} inputMode="decimal" aria-label="Precio por hora" onChange={(event) => patchLaborRow(index, { saleRate: event.target.value })} />
+                    <DecimalInput value={row.hours} disabled={readOnly} aria-label="Horas" onValueChange={(value) => patchLaborRow(index, { hours: value })} />
+                    <DecimalInput value={row.costRate} disabled={readOnly} aria-label="Coste por hora" onValueChange={(value) => patchLaborRow(index, { costRate: value })} />
+                    <DecimalInput value={row.saleRate} disabled={readOnly} aria-label="Precio por hora" onValueChange={(value) => patchLaborRow(index, { saleRate: value })} />
                     <button type="button" aria-label="Eliminar empleado" disabled={readOnly} onClick={() => setLaborRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}><Trash2 /></button>
                   </div>
                 ))}
@@ -1252,8 +1254,8 @@ function AdvancedLineSheet({
                 <div className={styles.formGrid}>
                   <Field className={styles.span2} label="Proveedor"><input value={form.supplierName} disabled={readOnly} onChange={(event) => set("supplierName", event.target.value)} placeholder="Opcional" /></Field>
                   <Field label="Código"><input value={form.supplierCode} disabled={readOnly} onChange={(event) => set("supplierCode", event.target.value)} placeholder="Referencia del proveedor" /></Field>
-                  <Field label="PVP proveedor / ud"><input value={form.supplierUnitPrice} disabled={readOnly} inputMode="decimal" onChange={(event) => set("supplierUnitPrice", event.target.value)} /></Field>
-                  <Field label="Coste neto / ud"><input value={form.directUnitCost} disabled={readOnly} inputMode="decimal" onChange={(event) => set("directUnitCost", event.target.value)} /></Field>
+                  <Field label="PVP proveedor / ud"><DecimalInput value={form.supplierUnitPrice} disabled={readOnly} onValueChange={(value) => set("supplierUnitPrice", value)} /></Field>
+                  <Field label="Coste neto / ud"><DecimalInput value={form.directUnitCost} disabled={readOnly} onValueChange={(value) => set("directUnitCost", value)} /></Field>
                   <Field label="Coste total"><output>{formatMoney(localPreview.costTotal)}</output></Field>
                 </div>
 
@@ -1263,7 +1265,7 @@ function AdvancedLineSheet({
                       <strong>Descuento del proveedor</strong>
                       <span>Puede ser uno o varios descuentos consecutivos.</span>
                     </div>
-                    <input value={discountTextValue} disabled={readOnly} onChange={(event) => setDiscountTextValue(event.target.value)} placeholder="Ej. 40, 10, 5" />
+                    <input value={discountTextValue} disabled={readOnly} onChange={(event) => setDiscountTextValue(event.target.value)} placeholder="Ej. 40 + 10 + 5" />
                     <small>Descuento efectivo: {formatDiscount(localPreview.effectiveDiscount)}{discountValues.length ? ` · Descuentos: ${discountValues.map((value) => `${formatNumber(value)} %`).join(" + ")}` : ""}</small>
                   </div>
                 ) : null}
@@ -1280,7 +1282,7 @@ function AdvancedLineSheet({
                 </div>
 
                 <Field label={SALE_RULE_COPY[form.saleRule]!.valueLabel}>
-                  <input value={form.saleRuleValue} disabled={readOnly} inputMode="decimal" onChange={(event) => set("saleRuleValue", event.target.value)} />
+                  <DecimalInput value={form.saleRuleValue} disabled={readOnly} onValueChange={(value) => set("saleRuleValue", value)} />
                 </Field>
 
                 {activeLine.type === "material" && autoRule ? (
@@ -1390,11 +1392,11 @@ function QuickTextField({ label, value, onChange, readOnly, className = "", plac
 }
 
 function QuickNumberField({ label, value, onChange, readOnly, className = "" }: { label: string; value: string; onChange: (value: string) => void; readOnly: boolean; className?: string | undefined }) {
-  return <div className={`${styles.quickField} ${className}`}><label>{label}</label><input value={value} disabled={readOnly} inputMode="decimal" onChange={(event) => onChange(event.target.value)} /></div>;
+  return <div className={`${styles.quickField} ${className}`}><label>{label}</label><DecimalInput value={value} disabled={readOnly} onValueChange={(value) => onChange(value)} /></div>;
 }
 
 function QuickMoneyField({ label, hint, value, onChange, readOnly, className = "" }: { label: string; hint?: string; value: string; onChange: (value: string) => void; readOnly: boolean; className?: string | undefined }) {
-  return <div className={`${styles.quickField} ${className}`}><label>{label}{hint ? <small>{hint}</small> : null}</label><input value={value} disabled={readOnly} inputMode="decimal" placeholder="0,00" onChange={(event) => onChange(event.target.value)} /></div>;
+  return <div className={`${styles.quickField} ${className}`}><label>{label}{hint ? <small>{hint}</small> : null}</label><DecimalInput value={value} disabled={readOnly} placeholder="0" onValueChange={onChange} /></div>;
 }
 
 function QuickOutput({ label, value, className = "" }: { label: string; value: string | number | undefined; className?: string | undefined }) {
@@ -1522,9 +1524,9 @@ function num(value: string | number | null | undefined) {
   return Number.isFinite(result) ? result : 0;
 }
 
+/** Decimal canónico para la API ("" si vacío o inválido). Acepta 13,96 · 13.96 · 1.234,50. */
 function normalizeDecimal(value: string | number | null | undefined) {
-  if (value === null || value === undefined || value === "") return "";
-  return String(value).trim().replace(",", ".");
+  return parseDecimalText(value) ?? "";
 }
 
 function decimalOr(value: string, fallback: string) {
@@ -1543,8 +1545,9 @@ function normalizedRate(value: string | null | undefined) {
   return toInputDecimal(value) || "7";
 }
 
+/** "40 + 10", "40; 12,5" o "40, 10": la coma seguida de espacio separa; "12,5" es decimal. */
 function parseDiscounts(value: string) {
-  return value.replaceAll("%", "").split(/[+;,]/).map((part) => normalizeDecimal(part)).filter(Boolean);
+  return value.replaceAll("%", "").split(/\s*[+;]\s*|,\s+|\s+/).map((part) => normalizeDecimal(part)).filter(Boolean);
 }
 
 function formatDiscount(value: string | undefined) { return value === undefined ? "—" : `${formatNumber(value)} %`; }
