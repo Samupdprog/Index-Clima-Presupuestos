@@ -133,6 +133,32 @@ describe("estimate export authority and recovery", () => {
     expect(deps.holded.saveEstimate).not.toHaveBeenCalled();
     expect(deps.exports.recordId).not.toHaveBeenCalled();
   });
+  it("updates the same estimate with the new number after a local rename", async () => {
+    const deps = dependencies();
+    deps.quotes.getQuoteById.mockResolvedValue({ ...quote, reference: "TEST-NUEVO", holdedEstimateId: "estimate", holdedSyncedReference: "TEST" });
+    deps.exports.reserve.mockResolvedValue({ documentId: "estimate", uncertain: false });
+    deps.holded.getEstimate.mockResolvedValueOnce({ ...remote, document_number: "TEST" }).mockResolvedValue({ ...remote, document_number: "TEST-NUEVO" });
+    await syncQuoteToHolded(deps as unknown as QuoteExportDeps)(input);
+    expect(deps.holded.saveEstimate).toHaveBeenCalledWith(expect.objectContaining({ number: "TEST-NUEVO" }), "estimate");
+    expect(deps.exports.complete).toHaveBeenCalledWith("installation", "quote", 4, "TEST-NUEVO");
+  });
+  it("still blocks when the number was changed in Holded instead of locally", async () => {
+    const deps = dependencies();
+    deps.quotes.getQuoteById.mockResolvedValue({ ...quote, reference: "TEST-NUEVO", holdedEstimateId: "estimate", holdedSyncedReference: "TEST" });
+    deps.exports.reserve.mockResolvedValue({ documentId: "estimate", uncertain: false });
+    deps.holded.getEstimate.mockResolvedValueOnce({ ...remote, document_number: "CAMBIADO-EN-HOLDED" });
+    await expect(syncQuoteToHolded(deps as unknown as QuoteExportDeps)(input)).rejects.toThrow("holded_number_mismatch");
+    expect(deps.holded.saveEstimate).not.toHaveBeenCalled();
+  });
+  it("fails visibly if Holded does not apply the new number", async () => {
+    const deps = dependencies();
+    deps.quotes.getQuoteById.mockResolvedValue({ ...quote, reference: "TEST-NUEVO", holdedEstimateId: "estimate", holdedSyncedReference: "TEST" });
+    deps.exports.reserve.mockResolvedValue({ documentId: "estimate", uncertain: false });
+    deps.holded.getEstimate.mockResolvedValue({ ...remote, document_number: "TEST" });
+    await expect(syncQuoteToHolded(deps as unknown as QuoteExportDeps)(input)).rejects.toThrow("holded_number_mismatch");
+    expect(deps.holded.saveEstimate).toHaveBeenCalledTimes(1);
+    expect(deps.exports.complete).not.toHaveBeenCalled();
+  });
   it("does not duplicate an uncertain estimate whose recovered number differs", async () => {
     const deps = dependencies();
     deps.exports.reserve.mockResolvedValue({ documentId: null, uncertain: true });

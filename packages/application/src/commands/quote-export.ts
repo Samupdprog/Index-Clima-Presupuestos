@@ -102,7 +102,7 @@ export function syncQuoteToHolded(deps: QuoteExportDeps) {
     const quote = await deps.quotes.getQuoteById(input.installationId, input.quoteId);
     if (!quote) throw new QuoteExportError("quote_not_found");
     if (quote.revision !== input.expectedRevision) throw new QuoteExportError("revision_conflict");
-    if (quote.accessMode === "read_only" || quote.status === "archived") throw new QuoteExportError("quote_read_only");
+    if (quote.accessMode === "read_only" || quote.status === "archived" || Boolean(quote.deletedAt)) throw new QuoteExportError("quote_read_only");
     const client = quote.clientId ? await deps.clients.getById(input.installationId, quote.clientId) : null;
     if (!client || client.deletedAt || !client.holdedContactId) throw new QuoteExportError("holded_client_not_linked");
     const payload = buildEstimatePayload(quote, client.holdedContactId, await deps.holded.listTaxes(), deps.taxMapping);
@@ -114,7 +114,9 @@ export function syncQuoteToHolded(deps: QuoteExportDeps) {
       if (documentId) {
         try {
           const existing = await deps.holded.getEstimate(documentId);
-          if (existing.document_number !== payload.number) {
+          // Renombrado local: el Estimate conserva el último número sincronizado y se actualiza el MISMO documento.
+          const renamedLocally = Boolean(quote.holdedSyncedReference) && existing.document_number === quote.holdedSyncedReference;
+          if (existing.document_number !== payload.number && !renamedLocally) {
             throw new QuoteExportError("holded_number_mismatch", {
               expected: payload.number,
               actual: existing.document_number ?? null,
@@ -151,7 +153,7 @@ export function syncQuoteToHolded(deps: QuoteExportDeps) {
       }
       verifyEstimate(quote, payload, remote);
       await deps.holded.getEstimatePdf(documentId);
-      await deps.exports.complete(input.installationId, input.quoteId, input.expectedRevision);
+      await deps.exports.complete(input.installationId, input.quoteId, input.expectedRevision, payload.number);
       deps.logExport?.({ operation: attemptedCreate ? "estimate.create" : "estimate.update", quoteId: quote.id, holdedEstimateId: documentId, number: payload.number, lineCount: payload.items.length, taxIncluded: payload.tax_included, status: "synced" });
       return deps.quotes.getQuoteById(input.installationId, input.quoteId);
     } catch (error) {

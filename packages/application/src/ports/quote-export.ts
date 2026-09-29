@@ -17,7 +17,8 @@ export interface QuoteExportRepository {
   withLock<T>(installationId: string, quoteId: string, work: () => Promise<T>): Promise<T>;
   reserve(installationId: string, quoteId: string, expectedRevision: number): Promise<{ documentId: string | null; uncertain: boolean }>;
   recordId(installationId: string, quoteId: string, documentId: string | null): Promise<void>;
-  complete(installationId: string, quoteId: string, exportedRevision: number): Promise<void>;
+  /** `syncedReference`: número enviado a Holded; permite renombrar después el mismo Estimate. */
+  complete(installationId: string, quoteId: string, exportedRevision: number, syncedReference?: string): Promise<void>;
   fail(installationId: string, quoteId: string, message: string, uncertain: boolean): Promise<void>;
 }
 export interface QuoteExportDeps { quotes: QuoteRepository; clients: ClientRepository; exports: QuoteExportRepository; holded: EstimateGateway; taxMapping?: Record<string, string>; logExport?: (event: { operation: "estimate.create" | "estimate.update"; quoteId: string; holdedEstimateId: string | null; number: string; lineCount: number; taxIncluded: boolean; status: "synced" | "failed"; errorCode?: string; httpStatus?: number }) => void }

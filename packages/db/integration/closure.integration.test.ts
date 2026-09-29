@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { createDb, createQuoteRepository, createQuoteWorkflowRepository, createClientRepository, createDataResetRepository, createQuoteExportRepository, installations, auditEvents, withAuditActor } from "../src/index.js";
+import { createDb, createQuoteRepository, createQuoteWorkflowRepository, createClientRepository, createDataResetRepository, createQuoteExportRepository, installations, auditEvents, quotes as quotesTable, withAuditActor } from "../src/index.js";
 import { previewPriceAdjustment, previewQuoteLine } from "@quotes/application";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -57,6 +57,49 @@ describe("functional closure against PostgreSQL", () => {
     const quote = (await quotes.getQuoteById(installationId, quoteId))!;
     const preview = await previewQuoteLine(quotes)(installationId, quoteId, { type: "createQuoteLine", lineType: "material", expectedRevision: quote.revision, line: { description: "TEST", unit: "ud", quantity: "2", supplierUnitPrice: "1000", igicRate: "7", saleRule: "add_percentage", saleRuleValue: "10", saleBaseMode: "supplier_list_price" }, discounts: [{ percentage: "40" }, { percentage: "10" }], laborEntries: [] });
     expect(preview.sale.toString()).toBe("2200"); expect(preview.cost.toString()).toBe("1080");
+  });
+  it("derives the unit cost from an edited line total on the server", async () => {
+    const quote = (await quotes.getQuoteById(installationId, quoteId))!;
+    const lineId = quote.lines[2]!.id;
+    await workflow.updateLine({ installationId, quoteId, expectedRevision: quote.revision, lineId, changes: { quantity: "3", directTotalCost: "10" } });
+    const updated = (await quotes.getQuoteById(installationId, quoteId))!;
+    const line = updated.lines.find((item) => item.id === lineId)!;
+    expect(line.directUnitCost).toBe("3.333333");
+    expect(updated.calculation.lines.find((item) => item.id === lineId)!.cost).toBe("10.00");
+    await expect(workflow.updateLine({ installationId, quoteId, expectedRevision: updated.revision, lineId, changes: { quantity: "0", directTotalCost: "10" } })).rejects.toThrow("quantity_required_for_total");
+  });
+  it("changes the quote number, rejecting duplicates regardless of case", async () => {
+    const other = await quotes.create({ installationId, title: "TEST otro número" });
+    const current = (await quotes.getQuoteById(installationId, quoteId))!;
+    await expect(quotes.update({ installationId, id: quoteId, expectedRevision: current.revision, reference: other.reference.toLowerCase() })).rejects.toThrow("quote_reference_taken");
+    const renamed = await quotes.update({ installationId, id: quoteId, expectedRevision: current.revision, reference: "  TEST-RENOMBRADO  " });
+    expect(renamed.reference).toBe("TEST-RENOMBRADO");
+    const events = await db.select().from(auditEvents).where(eq(auditEvents.entityId, quoteId));
+    expect(events.some((event) => event.action === "quote.reference.changed")).toBe(true);
+  });
+  it("moves to trash, blocks edits, restores and deletes permanently only when allowed", async () => {
+    const draft = await quotes.create({ installationId, title: "TEST borrador para borrar" });
+    const sent = (await quotes.getQuoteById(installationId, quoteId))!;
+    await db.update(quotesTable).set({ holdedEstimateId: randomUUID().replace(/-/g, "").slice(0, 24) }).where(eq(quotesTable.id, sent.id));
+    // Enviado a Holded y fuera de la papelera: no se puede eliminar directamente.
+    await expect(quotes.deleteQuotePermanently({ installationId, id: sent.id, expectedRevision: sent.revision })).rejects.toThrow("quote_delete_requires_trash");
+    const trashed = await quotes.trashQuote({ installationId, id: sent.id, expectedRevision: sent.revision });
+    expect(trashed.deletedAt).toBeTruthy();
+    expect((await quotes.searchQuotes(installationId, "", "active")).some((quote) => quote.id === sent.id)).toBe(false);
+    expect((await quotes.searchQuotes(installationId, "", "trash")).some((quote) => quote.id === sent.id)).toBe(true);
+    await expect(workflow.updateLine({ installationId, quoteId: sent.id, expectedRevision: trashed.revision, lineId: trashed.lines[0]!.id, changes: { description: "x" } })).rejects.toThrow();
+    const restored = await quotes.restoreQuote({ installationId, id: sent.id, expectedRevision: trashed.revision });
+    expect(restored.deletedAt).toBeNull();
+    // Borrador nunca enviado: eliminación definitiva directa.
+    const result = await quotes.deleteQuotePermanently({ installationId, id: draft.id, expectedRevision: draft.revision });
+    expect(result).toMatchObject({ deleted: true, holdedUntouched: true });
+    expect(await quotes.getQuoteById(installationId, draft.id)).toBeNull();
+    // Desde la papelera también se elimina un presupuesto con líneas, ajustes y cálculos.
+    const again = await quotes.trashQuote({ installationId, id: sent.id, expectedRevision: restored.revision });
+    await quotes.deleteQuotePermanently({ installationId, id: sent.id, expectedRevision: again.revision });
+    expect(await quotes.getQuoteById(installationId, sent.id)).toBeNull();
+    expect((await db.select().from(auditEvents).where(eq(auditEvents.entityId, sent.id))).some((event) => event.action === "quote.deleted")).toBe(true);
+    quoteId = (await quotes.create({ installationId, title: "TEST sustituto" })).id;
   });
   it("links remote Holded estimates to local quotes only within the installation", async () => {
     const estimateId = randomUUID().replace(/-/g, "").slice(0, 24);

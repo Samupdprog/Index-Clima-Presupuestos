@@ -19,7 +19,7 @@ export function createQuoteExportRepository(db: Database) {
         const [quote] = await tx.select().from(quotes).where(where(installationId, quoteId)).for("update");
         if (!quote) throw new QuoteNotFoundError(quoteId);
         if (quote.revision !== expectedRevision) throw new RevisionConflictError("quote", quoteId);
-        if (quote.accessMode === "read_only" || quote.status === "archived") throw new ReadOnlyQuoteError(quoteId);
+        if (quote.accessMode === "read_only" || quote.status === "archived" || Boolean(quote.deletedAt)) throw new ReadOnlyQuoteError(quoteId);
         const uncertain = !quote.holdedEstimateId && ["processing", "uncertain"].includes(quote.holdedSyncStatus);
         await tx.update(quotes).set({ holdedSyncStatus: "processing", holdedSyncError: null }).where(where(installationId, quoteId));
         await tx.insert(auditEvents).values({ installationId, ...auditActor(), action: "quote.holded.start", entityType: "quote", entityId: quoteId, after: { revision: expectedRevision, estimateId: quote.holdedEstimateId, recovering: uncertain } });
@@ -29,12 +29,12 @@ export function createQuoteExportRepository(db: Database) {
     async recordId(installationId: string, quoteId: string, documentId: string | null) {
       await db.update(quotes).set({ holdedEstimateId: documentId }).where(where(installationId, quoteId));
     },
-    async complete(installationId: string, quoteId: string, exportedRevision: number) {
+    async complete(installationId: string, quoteId: string, exportedRevision: number, syncedReference?: string) {
       await db.transaction(async (tx) => {
         const [current] = await tx.select().from(quotes).where(where(installationId, quoteId)).for("update");
         if (!current) throw new QuoteNotFoundError(quoteId);
         const unchanged = current.revision === exportedRevision;
-        await tx.update(quotes).set({ holdedSyncStatus: unchanged ? "synced" : "pending", holdedSyncError: null, holdedLastSyncedAt: new Date(), holdedLastSyncedRevision: unchanged ? exportedRevision + 1 : exportedRevision, ...(unchanged ? { status: "finalized" as const, revision: exportedRevision + 1 } : {}), updatedAt: new Date() }).where(where(installationId, quoteId));
+        await tx.update(quotes).set({ holdedSyncStatus: unchanged ? "synced" : "pending", holdedSyncError: null, holdedLastSyncedAt: new Date(), holdedLastSyncedRevision: unchanged ? exportedRevision + 1 : exportedRevision, ...(syncedReference ? { holdedSyncedReference: syncedReference } : {}), ...(unchanged ? { status: "finalized" as const, revision: exportedRevision + 1 } : {}), updatedAt: new Date() }).where(where(installationId, quoteId));
         await tx.insert(auditEvents).values({ installationId, ...auditActor(), action: "quote.holded.completed", entityType: "quote", entityId: quoteId, after: { exportedRevision, estimateId: current.holdedEstimateId, current: unchanged } });
       });
     },

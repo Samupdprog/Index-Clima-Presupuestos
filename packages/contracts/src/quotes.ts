@@ -9,7 +9,12 @@ export const createQuoteRequestSchema = z.object({
 
 export const searchQuotesRequestSchema = z.object({
   q: z.string().trim().default(""),
+  /** `trash` lista la papelera; por defecto solo presupuestos activos. */
+  scope: z.enum(["active", "trash"]).default("active"),
 });
+
+/** Número/referencia del presupuesto: único por instalación, se envía a Holded como número del documento. */
+export const quoteReferenceSchema = z.string().trim().min(1).max(40).regex(/^[\p{L}\p{N}][\p{L}\p{N} ._\/-]*$/u, "Usa letras, números, espacios y . _ / -");
 
 export type CreateQuoteRequest = z.infer<typeof createQuoteRequestSchema>;
 

@@ -3,6 +3,10 @@ import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   archiveQuote,
+  changeQuoteReference,
+  deleteQuotePermanently,
+  restoreQuote,
+  trashQuote,
   addLaborEntry,
   addLaborLine,
   addMaterialLine,
@@ -553,7 +557,7 @@ const server = createServer(async (req, res) => {
     if (path[0] === "quotes" && path.length === 1 && req.method === "GET") {
       const parsed = searchQuotesRequestSchema.safeParse(Object.fromEntries(url.searchParams));
       if (!parsed.success) return sendJson(res, 400, { error: "invalid_input" });
-      return sendJson(res, 200, await searchQuotes(quotes!)(installationId!, parsed.data.q));
+      return sendJson(res, 200, await searchQuotes(quotes!)(installationId!, parsed.data.q, parsed.data.scope));
     }
     if (path[0] === "quotes" && path.length === 2 && req.method === "GET") {
       const result = await getQuote(quotes!)(installationId!, path[1]!);
@@ -612,6 +616,11 @@ const server = createServer(async (req, res) => {
       if (command.type === "addQuoteText") return sendJson(res, 200, await addQuoteText(quoteWorkflow!)(context as never));
       if (command.type === "changeQuoteStatus") return sendJson(res, 200, await updateQuote(quotes!)({ installationId: installationId!, id: path[1]!, expectedRevision: command.expectedRevision, status: command.status }));
       if (command.type === "archiveQuote") return sendJson(res, 200, await archiveQuote(quotes!)({ installationId: installationId!, id: path[1]!, expectedRevision: command.expectedRevision, status: "archived" }));
+      const lifecycle = { installationId: installationId!, id: path[1]!, expectedRevision: command.expectedRevision };
+      if (command.type === "changeQuoteReference") return sendJson(res, 200, await changeQuoteReference(quotes!)({ ...lifecycle, reference: command.reference }));
+      if (command.type === "trashQuote") return sendJson(res, 200, await trashQuote(quotes!)(lifecycle));
+      if (command.type === "restoreQuote") return sendJson(res, 200, await restoreQuote(quotes!)(lifecycle));
+      if (command.type === "deleteQuotePermanently") return sendJson(res, 200, await deleteQuotePermanently(quotes!)(lifecycle));
       return sendJson(res, 200, await executeQuoteCommand(quoteWorkflow!, context as unknown as Record<string, unknown>));
     }
     if (path[0] === "quotes" && path.length === 3 && path[2] === "holded" && req.method === "POST") {
@@ -623,7 +632,7 @@ const server = createServer(async (req, res) => {
       const quote = await getQuote(quotes!)(installationId!, path[1]!);
       if (!quote) return sendJson(res, 404, { error: "quote_not_found" });
       if (quote.revision !== parsed.data.expectedRevision) return sendJson(res, 409, { error: "revision_conflict" });
-      if (quote.accessMode === "read_only" || quote.status === "archived") return sendJson(res, 422, { error: "quote_read_only" });
+      if (quote.accessMode === "read_only" || quote.status === "archived" || Boolean(quote.deletedAt)) return sendJson(res, 422, { error: "quote_read_only" });
       if (quote.clientId) {
         const client = await clients!.getById(installationId!, quote.clientId);
         if (client && !client.holdedContactId) await syncClientWithHolded({ clients: clients!, holded: await buildHoldedGateway() })({ installationId: installationId!, id: client.id, expectedRevision: client.revision });

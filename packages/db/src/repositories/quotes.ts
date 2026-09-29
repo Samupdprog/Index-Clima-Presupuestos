@@ -1,10 +1,10 @@
-import { and, asc, desc, eq, ilike, inArray, isNull, max, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, max, ne, or, sql } from "drizzle-orm";
 import { calculateQuoteRecord } from "@quotes/application";
 import { serializeQuoteCalculation, PricingValidationError } from "@quotes/domain";
 import type { Database } from "../client.js";
 import { QuoteNotFoundError, ReadOnlyQuoteError, RevisionConflictError } from "../errors.js";
 import { clients } from "../schema/common.js";
-import { auditEvents } from "../schema/operations.js";
+import { auditEvents, priceAdjustmentAllocations, priceAdjustmentApplications } from "../schema/operations.js";
 import { auditActor } from "../audit-context.js";
 import { finalizeQuoteMutation } from "./quote-workflow.js";
 import { quoteCalculationRuns, quoteLineCalculations, quoteLineDiscounts, quoteLineLaborEntries, quotePriceAdjustmentTargets, quotePriceAdjustments, quoteTextBlocks, quoteVersions, quoteLines, quotes, referenceCounters } from "../schema/quotes.js";
@@ -23,6 +23,7 @@ export interface UpdateQuoteInput {
   installationId: string;
   expectedRevision: number;
   title?: string;
+  reference?: string;
   clientId?: string | null;
   status?: "draft" | "ready_for_review" | "finalized" | "archived";
   holdedEstimateId?: string;
@@ -57,6 +58,20 @@ export function createQuoteRepository(db: Database) {
     return { ...result, calculation: { ...run, ...calculation, quoteRevision: quote.revision }, revision: quote.revision };
   }
 
+  async function setTrashed(input: { installationId: string; id: string; expectedRevision: number }, deletedAt: Date | null, action: string) {
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(quotes).where(and(eq(quotes.id, input.id), eq(quotes.installationId, input.installationId))).for("update").limit(1);
+      if (!current) throw new QuoteNotFoundError(input.id);
+      if (current.revision !== input.expectedRevision) throw new RevisionConflictError("quote", input.id);
+      if (Boolean(current.deletedAt) === Boolean(deletedAt)) throw new PricingValidationError(deletedAt ? "quote_already_in_trash" : "quote_not_in_trash");
+      await tx.update(quotes).set({ deletedAt, revision: current.revision + 1, updatedAt: new Date() }).where(eq(quotes.id, current.id));
+      await tx.insert(auditEvents).values({ installationId: input.installationId, ...auditActor(), action, entityType: "quote", entityId: current.id, after: { revision: current.revision + 1 } });
+      const result = await getById(tx, input.installationId, current.id);
+      if (!result) throw new QuoteNotFoundError(input.id);
+      return result;
+    });
+  }
+
   return {
     async create(input: CreateQuoteInput) {
       return db.transaction(async (tx) => {
@@ -85,9 +100,10 @@ export function createQuoteRepository(db: Database) {
       return getById(db, installationId, id);
     },
 
-    async searchQuotes(installationId: string, query = "") {
+    async searchQuotes(installationId: string, query = "", scope: "active" | "trash" = "active") {
       const rows = await db.select().from(quotes).where(and(
         eq(quotes.installationId, installationId),
+        scope === "trash" ? isNotNull(quotes.deletedAt) : isNull(quotes.deletedAt),
         query ? or(ilike(quotes.reference, `%${query}%`), ilike(quotes.title, `%${query}%`)) : undefined,
       )).orderBy(desc(quotes.updatedAt));
       return rows.map((quote) => ({ ...quote, lines: [] }));
@@ -105,8 +121,21 @@ export function createQuoteRepository(db: Database) {
       return db.transaction(async (tx) => {
         const current = await getById(tx, input.installationId, input.id);
         if (!current) throw new QuoteNotFoundError(input.id);
-        if (current.accessMode === "read_only" || current.status === "archived") throw new ReadOnlyQuoteError(input.id);
-        const { id, installationId, expectedRevision, ...changes } = input;
+        if (current.accessMode === "read_only" || current.status === "archived" || Boolean(current.deletedAt)) throw new ReadOnlyQuoteError(input.id);
+        const { id, installationId, expectedRevision, ...requested } = input;
+        const changes: Partial<typeof quotes.$inferInsert> = { ...requested };
+        if (input.reference !== undefined) {
+          const reference = input.reference.trim();
+          if (!reference) throw new PricingValidationError("quote_reference_required");
+          if (reference !== current.reference) {
+            // Única por instalación sin distinguir mayúsculas (P-1 y p-1 serían confusos).
+            const [taken] = await tx.select({ id: quotes.id }).from(quotes).where(and(eq(quotes.installationId, installationId), sql`lower(${quotes.reference}) = lower(${reference})`, ne(quotes.id, id))).limit(1);
+            if (taken) throw new PricingValidationError("quote_reference_taken");
+            // Vinculado a Holded: se recuerda el número remoto para actualizar el mismo Estimate.
+            if (current.holdedEstimateId && !current.holdedSyncedReference) changes.holdedSyncedReference = current.reference;
+          }
+          changes.reference = reference;
+        }
         let clientSnapshot = current.clientSnapshot;
         if (input.clientId !== undefined) {
           const [client] = input.clientId ? await tx.select().from(clients).where(and(eq(clients.id, input.clientId), eq(clients.installationId, installationId), isNull(clients.deletedAt))).limit(1) : [];
@@ -117,7 +146,8 @@ export function createQuoteRepository(db: Database) {
           .where(and(eq(quotes.id, id), eq(quotes.installationId, installationId), eq(quotes.revision, expectedRevision)))
           .returning();
         if (!quote) throw new RevisionConflictError("quote", id);
-        await tx.insert(auditEvents).values({ installationId, ...auditActor(), action: "quote.updated", entityType: "quote", entityId: id, after: { revision: quote.revision } });
+        const referenceChanged = changes.reference !== undefined && changes.reference !== current.reference;
+        await tx.insert(auditEvents).values({ installationId, ...auditActor(), action: referenceChanged ? "quote.reference.changed" : "quote.updated", entityType: "quote", entityId: id, ...(referenceChanged ? { before: { reference: current.reference } } : {}), after: { revision: quote.revision, ...(referenceChanged ? { reference: quote.reference } : {}) } });
         return { ...quote, lines: current.lines };
       });
     },
@@ -168,6 +198,47 @@ export function createQuoteRepository(db: Database) {
 
     async archiveQuote(input: UpdateQuoteInput) {
       return this.update({ ...input, status: "archived" });
+    },
+
+    /** Papelera: oculta el presupuesto y lo deja en solo lectura. Reversible. */
+    async trashQuote(input: { installationId: string; id: string; expectedRevision: number }) {
+      return setTrashed(input, new Date(), "quote.trashed");
+    },
+
+    async restoreQuote(input: { installationId: string; id: string; expectedRevision: number }) {
+      return setTrashed(input, null, "quote.restored");
+    },
+
+    /**
+     * Eliminación definitiva de los datos LOCALES (nunca toca Holded). Solo para borradores
+     * nunca enviados a Holded o presupuestos que ya están en la papelera. La auditoría se conserva.
+     */
+    async deleteQuotePermanently(input: { installationId: string; id: string; expectedRevision: number }) {
+      return db.transaction(async (tx) => {
+        const [current] = await tx.select().from(quotes).where(and(eq(quotes.id, input.id), eq(quotes.installationId, input.installationId))).for("update").limit(1);
+        if (!current) throw new QuoteNotFoundError(input.id);
+        if (current.revision !== input.expectedRevision) throw new RevisionConflictError("quote", input.id);
+        const neverSent = !current.holdedEstimateId && !current.holdedLastSyncedAt;
+        if (!current.deletedAt && !neverSent) throw new PricingValidationError("quote_delete_requires_trash");
+        const lineIds = tx.select({ id: quoteLines.id }).from(quoteLines).where(eq(quoteLines.quoteId, current.id));
+        const adjustmentIds = tx.select({ id: quotePriceAdjustments.id }).from(quotePriceAdjustments).where(eq(quotePriceAdjustments.quoteId, current.id));
+        const runIds = tx.select({ id: quoteCalculationRuns.id }).from(quoteCalculationRuns).where(eq(quoteCalculationRuns.quoteId, current.id));
+        const applicationIds = tx.select({ id: priceAdjustmentApplications.id }).from(priceAdjustmentApplications).where(inArray(priceAdjustmentApplications.adjustmentId, adjustmentIds));
+        await tx.delete(priceAdjustmentAllocations).where(or(eq(priceAdjustmentAllocations.quoteId, current.id), inArray(priceAdjustmentAllocations.applicationId, applicationIds)));
+        await tx.delete(priceAdjustmentApplications).where(inArray(priceAdjustmentApplications.adjustmentId, adjustmentIds));
+        await tx.delete(quotePriceAdjustmentTargets).where(inArray(quotePriceAdjustmentTargets.adjustmentId, adjustmentIds));
+        await tx.delete(quotePriceAdjustments).where(eq(quotePriceAdjustments.quoteId, current.id));
+        await tx.delete(quoteLineCalculations).where(inArray(quoteLineCalculations.calculationRunId, runIds));
+        await tx.delete(quoteCalculationRuns).where(eq(quoteCalculationRuns.quoteId, current.id));
+        await tx.delete(quoteLineDiscounts).where(inArray(quoteLineDiscounts.quoteLineId, lineIds));
+        await tx.delete(quoteLineLaborEntries).where(inArray(quoteLineLaborEntries.quoteLineId, lineIds));
+        await tx.delete(quoteLines).where(eq(quoteLines.quoteId, current.id));
+        await tx.delete(quoteTextBlocks).where(eq(quoteTextBlocks.quoteId, current.id));
+        await tx.delete(quoteVersions).where(eq(quoteVersions.quoteId, current.id));
+        await tx.delete(quotes).where(eq(quotes.id, current.id));
+        await tx.insert(auditEvents).values({ installationId: input.installationId, ...auditActor(), action: "quote.deleted", entityType: "quote", entityId: current.id, before: { reference: current.reference, title: current.title, holdedEstimateId: current.holdedEstimateId, fromTrash: Boolean(current.deletedAt) } });
+        return { deleted: true as const, id: current.id, reference: current.reference, holdedEstimateId: current.holdedEstimateId, holdedUntouched: true as const };
+      });
     },
   };
 }

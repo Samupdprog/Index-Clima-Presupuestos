@@ -29,6 +29,10 @@ export const quotes = pgTable("quotes", {
   holdedSyncError: text("holded_sync_error"),
   holdedLastSyncedAt: timestamp("holded_last_synced_at", { withTimezone: true }),
   holdedLastSyncedRevision: integer("holded_last_synced_revision"),
+  /** Número con el que se sincronizó por última vez en Holded (permite renombrar el mismo Estimate). */
+  holdedSyncedReference: text("holded_synced_reference"),
+  /** Papelera: el presupuesto queda oculto y en solo lectura hasta restaurarlo o eliminarlo. */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   duplicatedFromQuoteId: uuid("duplicated_from_quote_id"),
   duplicateRootQuoteId: uuid("duplicate_root_quote_id"),
   duplicateSequence: integer("duplicate_sequence"),
