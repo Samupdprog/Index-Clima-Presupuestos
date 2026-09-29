@@ -1,0 +1,143 @@
+.wrap {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.tableScroll {
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground-soft);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.table th:first-child,
+.table td:first-child {
+  text-align: left;
+}
+
+.table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  text-align: right;
+  vertical-align: middle;
+}
+
+.table td:first-child strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.table td:first-child small {
+  display: block;
+  margin-top: 2px;
+  color: var(--foreground-muted);
+  font-size: 11px;
+}
+
+.actions {
+  width: 44px;
+}
+
+/* Color como apoyo: el importe siempre se lee con su etiqueta. */
+.cost { color: var(--danger); }
+.sale { color: var(--primary); }
+.profit { color: var(--profit-positive); font-weight: 700; }
+.loss { color: var(--profit-negative); font-weight: 700; }
+
+.totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.totals > div {
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.totals dt {
+  color: var(--foreground-muted);
+  font-size: 11px;
+}
+
+.totals dd {
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+@container (max-width: 560px) {
+  .table thead {
+    display: none;
+  }
+
+  .table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .table td {
+    padding: 0;
+    border: 0;
+    text-align: left;
+  }
+
+  .table td:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .table td[data-label]:not(:first-child)::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--foreground-soft);
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .actions {
+    position: absolute;
+    right: 0;
+  }
+
+  .table tr {
+    position: relative;
+  }
+}
+
+@media (max-width: 640px) {
+  .wrap {
+    padding: 14px;
+  }
+
+  .totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

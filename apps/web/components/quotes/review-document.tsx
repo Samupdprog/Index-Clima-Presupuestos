@@ -62,6 +62,8 @@ function getUnitPrice(
   line: QuoteLine,
   calculation: CalculatedLine | undefined,
 ) {
+  // Precio unitario devuelto por el servidor; el cálculo local solo es respaldo.
+  if (calculation?.saleUnit !== undefined) return numeric(calculation.saleUnit);
   const units = getLineUnits(line);
   const sale = numeric(calculation?.sale);
 
