@@ -21,3 +21,23 @@ describe("comandos compuestos de líneas", () => {
     if (parsed.type === "createQuoteLine") expect("profit" in parsed.line).toBe(false);
   });
 });
+
+describe("edición parcial de una línea", () => {
+  const parse = (changes: Record<string, unknown>) => {
+    const command = quoteCommandSchema.parse({ type: "updateQuoteLine", expectedRevision: 3, lineId: "00000000-0000-4000-8000-000000000001", changes });
+    return command.type === "updateQuoteLine" ? command.changes : null;
+  };
+
+  it("solo contiene los campos enviados, sin cantidad ni IGIC por defecto", () => {
+    expect(parse({ directUnitCost: "12" })).toEqual({ directUnitCost: "12" });
+    expect(parse({ directTotalCost: "30" })).toEqual({ directTotalCost: "30" });
+    expect(parse({ saleRule: "unit_price", saleRuleValue: "25" })).toEqual({ saleRule: "unit_price", saleRuleValue: "25" });
+    expect(parse({ saleLineTotal: "90" })).toEqual({ saleLineTotal: "90" });
+    expect(parse({ description: "Tubo" })).toEqual({ description: "Tubo" });
+  });
+
+  it("mantiene los valores por defecto al crear líneas completas", () => {
+    const command = quoteCommandSchema.parse({ type: "createQuoteLine", expectedRevision: 0, lineType: "material", line: { description: "Tubo", unit: "ud", saleRule: "unit_price", saleRuleValue: "20" } });
+    expect(command.type === "createQuoteLine" && [command.line.quantity, command.line.igicRate]).toEqual(["1", "7"]);
+  });
+});

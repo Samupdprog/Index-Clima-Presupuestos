@@ -1,5 +1,5 @@
 import { and, asc, eq, sql } from "drizzle-orm";
-import { calculateQuote, resolveDirectTotalCost, resolveSaleBaseUnitPrice, PricingValidationError, type PriceAdjustment, type QuoteLineInput } from "@quotes/domain";
+import { calculateQuote, resolveDirectTotalCost, resolveSaleBaseUnitPrice, unitCostFromLineTotal, unitPriceFromLineTotal, PricingValidationError, type PriceAdjustment, type QuoteLineInput } from "@quotes/domain";
 import type { ExtractedLine } from "@quotes/contracts";
 import type { Database } from "../client.js";
 import { QuoteNotFoundError, ReadOnlyQuoteError, RevisionConflictError } from "../errors.js";
@@ -253,17 +253,21 @@ export function createQuoteWorkflowRepository(db: Database) {
       return db.transaction(async (tx) => {
         await assertQuote(tx, input);
         await assertLine(tx, input.quoteId, input.lineId);
-        onlyFields(input.changes, ["description", "unit", "quantity", "igicRate", "saleRule", "saleRuleValue", "saleBaseMode", "baseUnitPrice", "directUnitCost", "directTotalCost", "supplierUnitPrice", "supplierNameSnapshot", "supplierCodeSnapshot", "internalReference", "internalNotes", "eligibleForPriceAllocation"]);
-        let changes: Record<string, unknown> = input.changes;
-        if (input.changes.directTotalCost !== undefined && input.changes.directTotalCost !== null) {
-          // Coste total editado: el dominio deriva el coste unitario con la cantidad resultante.
+        onlyFields(input.changes, ["description", "unit", "quantity", "igicRate", "saleRule", "saleRuleValue", "saleLineTotal", "saleBaseMode", "baseUnitPrice", "directUnitCost", "directTotalCost", "supplierUnitPrice", "supplierNameSnapshot", "supplierCodeSnapshot", "internalReference", "internalNotes", "eligibleForPriceAllocation"]);
+        // Edición parcial: solo se escriben los campos recibidos; el resto de la línea no cambia.
+        const { directTotalCost, saleLineTotal, ...changes } = input.changes as Record<string, unknown>;
+        const hasCostTotal = directTotalCost !== undefined && directTotalCost !== null;
+        const hasSaleTotal = saleLineTotal !== undefined && saleLineTotal !== null;
+        if (hasCostTotal || hasSaleTotal) {
+          // Totales editados: el dominio deriva el importe por unidad con la cantidad resultante.
           const [line] = await tx.select({ quantity: quoteLines.quantity, type: quoteLines.type }).from(quoteLines).where(eq(quoteLines.id, input.lineId)).limit(1);
-          if (line?.type === "labor") throw new PricingValidationError("labor_cost_comes_from_entries");
-          changes = resolveDirectTotalCost({ ...input.changes, quantity: input.changes.quantity ?? line!.quantity });
-          if (input.changes.quantity === undefined) delete changes.quantity;
-        } else {
-          const { directTotalCost: _ignored, ...rest } = input.changes;
-          changes = rest;
+          if (line?.type === "labor") throw new PricingValidationError(hasCostTotal ? "labor_cost_comes_from_entries" : "labor_sale_comes_from_entries");
+          const quantity = String(changes.quantity ?? line!.quantity);
+          if (hasCostTotal) changes.directUnitCost = unitCostFromLineTotal(String(directTotalCost), quantity).toString();
+          if (hasSaleTotal) {
+            changes.saleRule = "unit_price";
+            changes.saleRuleValue = unitPriceFromLineTotal(String(saleLineTotal), quantity).toString();
+          }
         }
         await tx.update(quoteLines).set({ ...changes, updatedAt: new Date() }).where(and(eq(quoteLines.id, input.lineId), eq(quoteLines.quoteId, input.quoteId)));
         return finalize(tx, input.quoteId, input.installationId, input.expectedRevision, "quote.line.updated");

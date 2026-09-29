@@ -2,6 +2,13 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); versiones [SemVer](https://semver.org/lang/es/).
 
+## [1.1.1] — 2026-09-29
+
+### Corregido
+
+- Editar en la tabla de conceptos un solo dato (coste por unidad, coste total, precio cliente, descripción o IGIC) reseteaba la cantidad a 1 y el IGIC a 7 %, cambiando la línea entera. Causa: en Zod 4 `.partial()` conserva los valores por defecto del esquema, así que la edición parcial rellenaba campos no enviados. Ahora solo cambia el dato editado.
+- Editar el precio cliente total de una línea ya no la convierte en «total fijo»: el servidor deriva el precio por unidad y, si después cambia la cantidad, la venta escala con ella (igual que el coste total).
+
 ## [1.1.0] — 2026-09-29
 
 Detalle funcional y técnico en [SPEC-013](docs/specs/013-v1.1-ux-catalog-lifecycle.md).

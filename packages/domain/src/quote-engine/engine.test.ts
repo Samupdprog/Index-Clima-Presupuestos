@@ -7,6 +7,7 @@ import {
   calculateQuote,
   resolveSaleBaseUnitPrice,
   unitCostFromLineTotal,
+  unitPriceFromLineTotal,
 } from "./engine.js";
 import { money } from "../money/money.js";
 
@@ -141,5 +142,8 @@ describe("unit cost from a line total", () => {
   it("rejects a zero quantity and negative totals", () => {
     expect(() => unitCostFromLineTotal("10", "0")).toThrow("quantity_required_for_total");
     expect(() => unitCostFromLineTotal("-1", "2")).toThrow("invalid_unit_cost");
+    expect(unitPriceFromLineTotal("90", "3").toString()).toBe("30");
+    expect(unitPriceFromLineTotal("100", "3").toString()).toBe("33.333333");
+    expect(() => unitPriceFromLineTotal("90", "0")).toThrow("quantity_required_for_total");
   });
 });

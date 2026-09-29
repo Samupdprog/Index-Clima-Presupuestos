@@ -785,7 +785,8 @@ function ConceptLineRow({
       return;
     }
     if (field === "saleTotal") {
-      if (line.type !== "labor") await onCommit({ saleRule: "fixed_line_total", saleRuleValue: clean }, "Precio total actualizado");
+      // El servidor deriva el precio por unidad: si luego cambia la cantidad, la venta escala con ella.
+      if (line.type !== "labor") await onCommit({ saleLineTotal: clean }, "Precio total actualizado");
       return;
     }
     if (field === "igic") {

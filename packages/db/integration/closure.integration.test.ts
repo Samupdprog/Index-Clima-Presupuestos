@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createDb, createQuoteRepository, createQuoteWorkflowRepository, createClientRepository, createDataResetRepository, createQuoteExportRepository, createCatalogRepository, installations, auditEvents, quotes as quotesTable, withAuditActor } from "../src/index.js";
-import { applyMaterialImport, previewMaterialImport, previewPriceAdjustment, previewQuoteLine, type MaterialImportRepository } from "@quotes/application";
+import { applyMaterialImport, executeQuoteCommand, previewMaterialImport, previewPriceAdjustment, previewQuoteLine, type MaterialImportRepository } from "@quotes/application";
+import { quoteCommandSchema } from "@quotes/contracts";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -67,6 +68,36 @@ describe("functional closure against PostgreSQL", () => {
     expect(line.directUnitCost).toBe("3.333333");
     expect(updated.calculation.lines.find((item) => item.id === lineId)!.cost).toBe("10.00");
     await expect(workflow.updateLine({ installationId, quoteId, expectedRevision: updated.revision, lineId, changes: { quantity: "0", directTotalCost: "10" } })).rejects.toThrow("quantity_required_for_total");
+  });
+  it("inline edits change only the edited field of a catalog material line", async () => {
+    // Mismo camino que la web: el contrato valida el comando y la aplicación lo ejecuta.
+    const run = async (command: Record<string, unknown>) => {
+      const parsed = quoteCommandSchema.parse(command);
+      return executeQuoteCommand(workflow, { ...parsed, installationId, quoteId: draft.id });
+    };
+    const draft = await quotes.create({ installationId, title: "TEST edición en línea" });
+    await run({ type: "createQuoteLine", expectedRevision: draft.revision, lineType: "material", line: { description: "TEST tubo cobre", unit: "m", quantity: "1", igicRate: "3", saleRule: "unit_price", saleRuleValue: "20", saleBaseMode: "net_cost", directUnitCost: "10" }, discounts: [], laborEntries: [] });
+    const state = async () => {
+      const quote = (await quotes.getQuoteById(installationId, draft.id))!;
+      const line = quote.lines[0]!;
+      const calc = quote.calculation.lines[0]!;
+      return { revision: quote.revision, lineId: line.id, row: { description: line.description, unit: line.unit, quantity: Number(line.quantity), igic: Number(line.igicRate), cost: calc.cost, sale: calc.sale } };
+    };
+    const edit = async (changes: Record<string, unknown>) => {
+      const before = await state();
+      await run({ type: "updateQuoteLine", expectedRevision: before.revision, lineId: before.lineId, changes });
+      return (await state()).row;
+    };
+    const base = { description: "TEST tubo cobre", unit: "m", igic: 3 };
+    expect(await edit({ directUnitCost: "12" })).toEqual({ ...base, quantity: 1, cost: "12.00", sale: "20.00" });
+    expect(await edit({ quantity: "3" })).toEqual({ ...base, quantity: 3, cost: "36.00", sale: "60.00" });
+    expect(await edit({ directTotalCost: "45" })).toEqual({ ...base, quantity: 3, cost: "45.00", sale: "60.00" });
+    expect(await edit({ saleRule: "unit_price", saleRuleValue: "25" })).toEqual({ ...base, quantity: 3, cost: "45.00", sale: "75.00" });
+    expect(await edit({ saleLineTotal: "90" })).toEqual({ ...base, quantity: 3, cost: "45.00", sale: "90.00" });
+    // Tras fijar el total, cambiar la cantidad escala la venta con el precio por unidad derivado (30 €).
+    expect(await edit({ quantity: "4" })).toEqual({ ...base, quantity: 4, cost: "60.00", sale: "120.00" });
+    expect(await edit({ description: "TEST tubo cobre 3/8" })).toEqual({ ...base, description: "TEST tubo cobre 3/8", quantity: 4, cost: "60.00", sale: "120.00" });
+    expect(await edit({ igicRate: "7" })).toEqual({ ...base, description: "TEST tubo cobre 3/8", igic: 7, quantity: 4, cost: "60.00", sale: "120.00" });
   });
   it("changes the quote number, rejecting duplicates regardless of case", async () => {
     const other = await quotes.create({ installationId, title: "TEST otro número" });

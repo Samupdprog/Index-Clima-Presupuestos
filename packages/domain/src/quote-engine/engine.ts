@@ -121,6 +121,14 @@ export function unitCostFromLineTotal(total: Decimal.Value, quantity: Decimal.Va
   return lineTotal.div(units).toDecimalPlaces(6, Decimal.ROUND_HALF_UP);
 }
 
+/** Precio de venta por unidad (sin IGIC) a partir del precio total de la línea. */
+export function unitPriceFromLineTotal(total: Decimal.Value, quantity: Decimal.Value): Money {
+  const lineTotal = nonNegative(total, "sale_rule_value");
+  const units = nonNegative(quantity, "quantity");
+  if (units.isZero()) throw new PricingValidationError("quantity_required_for_total");
+  return lineTotal.div(units).toDecimalPlaces(6, Decimal.ROUND_HALF_UP);
+}
+
 /** Sustituye `directTotalCost` (coste total de la línea) por el coste unitario derivado. */
 export function resolveDirectTotalCost<T extends { quantity?: unknown; directTotalCost?: unknown; directUnitCost?: unknown }>(line: T): Omit<T, "directTotalCost"> {
   const { directTotalCost, ...rest } = line;
