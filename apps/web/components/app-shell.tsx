@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ClipboardList,
   FileText,
+  LogOut,
   Menu,
   Moon,
   Package,
@@ -88,6 +89,15 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       return nextValue;
     });
+  }
+
+
+  // La pantalla de inicio de sesión se muestra sin navegación.
+  if (pathname === "/login") return <>{children}</>;
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    window.location.href = "/login";
   }
 
   return (
@@ -179,6 +189,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Settings />
                 <span className="nav-text">Preferencias</span>
               </Link>
+              <button type="button" className="nav-item nav-button" onClick={() => void logout()}>
+                <LogOut />
+                <span className="nav-text">Cerrar sesión</span>
+              </button>
             </div>
           </aside>
 
