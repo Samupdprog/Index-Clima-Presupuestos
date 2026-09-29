@@ -1512,3 +1512,138 @@
     transition: none !important;
   }
 }
+
+/* ---------- v1.1 · filas: valor principal + dato secundario, sin concatenar ---------- */
+.tableShell {
+  container-type: inline-size;
+}
+
+.valueCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.valueCell > strong,
+.valueCell > small,
+.valueCell > .inlineDisplay {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.priceMeta {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+/* Las etiquetas de celda solo hacen falta cuando no se ve la cabecera de la tabla. */
+.valueCell > span {
+  display: none;
+}
+
+.fieldHint {
+  margin: -4px 0 0;
+  color: var(--foreground-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+/* Tabla estrecha (móvil, tablet o panel lateral abierto): tarjetas sin scroll horizontal. */
+@container (max-width: 1040px) {
+  .tableHeader {
+    display: none;
+  }
+
+  .lineList,
+  .mainRow {
+    min-width: 0;
+  }
+
+  .mainRow {
+    position: relative;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px 14px;
+    padding: 14px 14px 14px 44px;
+    align-items: start;
+  }
+
+  .dragHandle {
+    position: absolute;
+    top: 12px;
+    left: 8px;
+  }
+
+  .conceptCell {
+    grid-column: 1 / -1;
+    padding-right: 40px;
+  }
+
+  .valueCell > span {
+    display: block;
+  }
+
+  .editButton {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .moreButton {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+  }
+
+  .detailRow {
+    min-width: 0;
+    padding-left: 44px;
+  }
+}
+
+@container (max-width: 520px) {
+  .mainRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------- v1.1 · panel de edición: sin scroll horizontal en ningún ancho ---------- */
+.advancedForm,
+.advancedForm * {
+  min-width: 0;
+}
+
+.advancedForm input,
+.advancedForm select,
+.advancedForm textarea {
+  width: 100%;
+  max-width: 100%;
+}
+
+@container (max-width: 560px) {
+  .formGrid,
+  .ruleGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .advancedLaborHead {
+    display: none;
+  }
+
+  .advancedLaborRow {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) 32px;
+  }
+
+  .advancedLaborRow > :first-child {
+    grid-column: 1 / -1;
+  }
+
+  .editorPreview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .editorSectionHead {
+    flex-wrap: wrap;
+  }
+}

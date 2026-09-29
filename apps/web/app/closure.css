@@ -25,3 +25,85 @@ input[aria-invalid="true"] {
   border-color: var(--danger) !important;
   box-shadow: 0 0 0 3px var(--danger-soft) !important;
 }
+
+/* v1.1 · Panel lateral amplio: dos columnas en escritorio, pantalla completa en móvil. */
+.sheet-content.sheet-wide {
+  width: min(680px, 100vw);
+  max-width: 100vw;
+}
+
+.sheet-content .sheet-body {
+  overflow-x: hidden;
+  container-type: inline-size;
+}
+
+.sheet-content .sheet-body *,
+.sheet-content .sheet-body input,
+.sheet-content .sheet-body select,
+.sheet-content .sheet-body textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 720px) {
+  .sheet-content.sheet-wide {
+    width: 100vw;
+    border-left: 0;
+  }
+}
+
+/* v1.1 · Revisión: selector Cliente / Interna y resultado interno. */
+.review-view-switch {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+}
+
+.review-view-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.review-view-switch button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.review-view-switch button[data-active] {
+  background: var(--surface-raised);
+  color: var(--foreground);
+  box-shadow: var(--shadow-xs);
+}
+
+.review-view-switch button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.summary-section-label {
+  margin: 0 0 6px;
+  color: var(--foreground-soft);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.summary-cost { color: var(--danger); }
+.summary-profit { color: var(--profit-positive); }
+.summary-loss { color: var(--profit-negative); }
