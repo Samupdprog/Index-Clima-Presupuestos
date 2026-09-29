@@ -1,11 +1,13 @@
 .workspace {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   min-width: 0;
 }
 
 /* ---------- compositor ---------- */
 .composer {
+  min-width: 0;
   overflow: visible;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -1585,6 +1587,12 @@
     display: block;
   }
 
+  /* Anula las posiciones fijas del diseño móvil anterior: las celdas fluyen por la rejilla. */
+  .mainRow > .valueCell,
+  .mainRow > .valueCell:nth-of-type(n) {
+    grid-column: auto;
+  }
+
   .editButton {
     grid-column: 1 / -1;
     justify-self: start;
@@ -1594,6 +1602,8 @@
     position: absolute;
     top: 10px;
     right: 10px;
+    grid-column: auto;
+    grid-row: auto;
   }
 
   .detailRow {
@@ -1605,6 +1615,19 @@
 @container (max-width: 520px) {
   .mainRow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .typeTabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .typeTabs button {
+    justify-content: center;
+    min-width: 0;
   }
 }
 
