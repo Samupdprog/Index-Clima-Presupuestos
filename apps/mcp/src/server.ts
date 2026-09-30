@@ -52,14 +52,24 @@ export function profileFor(principal: McpPrincipal) {
   return { id, name: INSTALLATION_NAME, nickname: principal.subject };
 }
 
+const TITLE_WORDS: Record<string, string> = { mcp: "MCP", holded: "Holded" };
+
+/** Título legible para el descriptor: `create_material` → `Create material`. */
+export function toolTitle(name: string) {
+  const words = name.split("_").filter(Boolean).map((word) => TITLE_WORDS[word] ?? word);
+  const [first = "", ...rest] = words;
+  return [first.charAt(0).toUpperCase() + first.slice(1), ...rest].join(" ");
+}
+
 export function createGeneratorServer(api: GeneratorApi, principal: McpPrincipal, context: ServerContext = { authMode: "bearer", resourceMetadataUrl: "" }) {
-  const server = new McpServer({ name: "index-clima-presupuestos", version: "0.4.0" }, { instructions: GENERATOR_GUIDE });
+  const server = new McpServer({ name: "index-clima-presupuestos", version: "0.4.1" }, { instructions: GENERATOR_GUIDE });
   const oauth = context.authMode !== "bearer";
   const schemes = new Map<string, ReturnType<typeof securitySchemesFor>>();
   for (const tool of generatorTools) {
     const securitySchemes = securitySchemesFor(tool.scopes);
     schemes.set(tool.name, securitySchemes);
     server.registerTool(tool.name, {
+      title: toolTitle(tool.name),
       description: tool.description,
       inputSchema: tool.input,
       outputSchema: envelopeOutput(tool.output),
@@ -70,6 +80,7 @@ export function createGeneratorServer(api: GeneratorApi, principal: McpPrincipal
   const profileSchemes = securitySchemesFor([]);
   schemes.set("get_mcp_profile", profileSchemes);
   server.registerTool("get_mcp_profile", {
+    title: toolTitle("get_mcp_profile"),
     description: "Perfil de la conexión autenticada: instalación (Index Clima) e identidad del usuario conectado. SOLO LECTURA. Los scopes efectivos se indican en el texto. Nunca devuelve tokens ni secretos.",
     outputSchema: profileOutput,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },

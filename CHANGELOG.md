@@ -2,6 +2,14 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); versiones [SemVer](https://semver.org/lang/es/).
 
+## [1.1.2] — 2026-09-30
+
+### Corregido
+
+- MCP compatible con el action discovery actual de ChatGPT (`Authentication succeeded, action discovery failed`): todas las herramientas publican `title`, y los catálogos usan schemas de salida cerrados y explícitos (material, empleado, suplemento, desplazamiento, proveedor y texto) en lugar de `z.record(z.string(), z.json())`, que generaba `propertyNames`, `additionalProperties: {}` y `$ref` recursivos. Se mantienen las 52 herramientas.
+- El input MCP ya no acepta `metadata` libre en `create_material`, `update_material` e `import_quote_lines` (la API interna no cambia). Las respuestas de catálogo ya no incluyen `installationId` ni `metadata`.
+- Test que falla si `tools/list` publica una herramienta sin `title` o schemas con `propertyNames`, `additionalProperties: {}` o `$ref`.
+
 ## [1.1.1] — 2026-09-29
 
 ### Corregido

@@ -77,6 +77,22 @@ export const errorOutput = z.strictObject({
   message: z.string(), status: z.number().int().optional(), backendCode: z.string().optional(),
   holdedCode: z.string().optional(), retryAfterSeconds: z.number().int().nonnegative().optional(), retryable: z.boolean(),
 });
+// Registros de catálogo tal como los devuelve la API (filas de la tabla, importes como decimal string).
+// Schemas cerrados y explícitos: `installationId` y `metadata` no se publican y se recortan de la respuesta.
+const catalogBase = { id: z.uuid(), active: z.boolean(), createdAt: z.string() };
+const nullableText = z.string().nullable();
+export const catalogMaterialOutput = z.object({ ...catalogBase, name: z.string(), supplierId: z.uuid().nullable(), supplierNameSnapshot: nullableText, supplierCode: nullableText, description: nullableText, unit: z.string(), supplierUnitPrice: decimalSchema.nullable(), saleUnitPrice: decimalSchema.nullable(), igicRate: decimalSchema, updatedAt: z.string() });
+export const catalogEmployeeOutput = z.object({ ...catalogBase, name: z.string(), costRate: decimalSchema, saleRate: decimalSchema, defaultIgicRate: decimalSchema, updatedAt: z.string() });
+export const catalogSupplementOutput = z.object({ ...catalogBase, name: z.string(), employeeId: z.uuid().nullable(), amount: decimalSchema, addPerHour: decimalSchema });
+export const catalogTravelOutput = z.object({ ...catalogBase, name: z.string(), description: nullableText, unit: z.string(), costUnitPrice: decimalSchema, saleUnitPrice: decimalSchema, igicRate: decimalSchema, updatedAt: z.string() });
+export const catalogSupplierOutput = z.object({ ...catalogBase, name: z.string(), taxId: nullableText, updatedAt: z.string() });
+export const catalogTextTemplateOutput = z.object({ ...catalogBase, title: z.string(), body: z.string(), alwaysInclude: z.boolean(), updatedAt: z.string() });
+/**
+ * Cualquier registro de catálogo. Orden de más a menos específico: un proveedor solo
+ * tiene campos comunes, así que va el último para no absorber (y recortar) otras filas.
+ */
+export const catalogRecordOutput = z.union([catalogMaterialOutput, catalogTravelOutput, catalogEmployeeOutput, catalogSupplementOutput, catalogTextTemplateOutput, catalogSupplierOutput]);
+
 export function envelopeOutput(data: z.ZodType) {
   return z.strictObject({ ok: z.boolean(), data: data.nullable(), error: errorOutput.nullable() });
 }

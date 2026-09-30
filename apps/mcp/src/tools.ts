@@ -3,7 +3,7 @@ import { catalogMutationSchema, createClientRequestSchema, materialImportRowSche
 import type { McpPrincipal, McpScope } from "./auth.js";
 import { GeneratorApiError, toolError, type GeneratorApi } from "./api-client.js";
 import { insufficientScopeChallenge, wwwAuthenticateMeta } from "./security.js";
-import { clientOutput, quoteOutput, mutationOutput, previewOutput, reviewOutput, holdedStatusOutput, syncClientsOutput, decimalSchema, revisionSchema, envelopeOutput } from "./schemas.js";
+import { clientOutput, quoteOutput, mutationOutput, previewOutput, reviewOutput, holdedStatusOutput, syncClientsOutput, decimalSchema, revisionSchema, envelopeOutput, catalogEmployeeOutput, catalogMaterialOutput, catalogRecordOutput, catalogSupplierOutput, catalogTextTemplateOutput, catalogTravelOutput } from "./schemas.js";
 
 type Input = Record<string, unknown>;
 export interface GeneratorTool {
@@ -41,7 +41,8 @@ function strictSchema(schema: z.ZodType): z.ZodType {
 }
 const createLineInput = strictSchema(createLineCommand.omit({ type: true, lineType: true }).extend(quoteId)) as z.ZodObject;
 const updateLineInput = strictSchema(updateLineCommand.omit({ type: true }).extend(quoteId)) as z.ZodObject;
-const importLinesInput = strictSchema(importLinesCommand.omit({ type: true }).extend(quoteId)) as z.ZodObject;
+// `metadata` (objeto libre) no se publica al MCP: ChatGPT rechaza schemas abiertos. La API lo sigue aceptando.
+const importLinesInput = strictSchema(importLinesCommand.omit({ type: true }).extend({ ...quoteId, lines: (importLinesCommand.shape.lines as z.ZodArray<z.ZodObject>).element.omit({ metadata: true }).array().min(1).max(500) })) as z.ZodObject;
 
 const query = (params: Record<string, unknown>) => {
   const search = new URLSearchParams();
@@ -77,30 +78,31 @@ const holdedEstimateTools: GeneratorTool[] = [
 
 // Catálogos: herramientas tipadas por clase. Escribir en catálogo exige quotes:write y nunca
 // se hace como efecto secundario de añadir una línea (las líneas guardan snapshots).
-const catalogRecordOutput = z.record(z.string(), z.json());
 const CATALOG_KINDS = [
-  { tool: "material", api: "materials", label: "material", hint: "name obligatorio; supplierUnitPrice (coste/PVP proveedor), saleUnitPrice (venta habitual), unit, igicRate 0/3/7/15, supplierNameSnapshot, supplierCode, description" },
-  { tool: "employee", api: "employees", label: "empleado", hint: "name obligatorio; costRate (coste/hora), saleRate (venta/hora), defaultIgicRate 0/3/7/15" },
-  { tool: "travel", api: "travels", label: "desplazamiento", hint: "name obligatorio; unit (km, viaje…), costUnitPrice, saleUnitPrice, igicRate, description" },
-  { tool: "supplier", api: "suppliers", label: "proveedor", hint: "name obligatorio; taxId (NIF/CIF)" },
-  { tool: "text_template", api: "text-templates", label: "texto habitual", hint: "title y body obligatorios; alwaysInclude (incluir por defecto)" },
+  { tool: "material", api: "materials", label: "material", output: catalogMaterialOutput, hint: "name obligatorio; supplierUnitPrice (coste/PVP proveedor), saleUnitPrice (venta habitual), unit, igicRate 0/3/7/15, supplierNameSnapshot, supplierCode, description" },
+  { tool: "employee", api: "employees", label: "empleado", output: catalogEmployeeOutput, hint: "name obligatorio; costRate (coste/hora), saleRate (venta/hora), defaultIgicRate 0/3/7/15" },
+  { tool: "travel", api: "travels", label: "desplazamiento", output: catalogTravelOutput, hint: "name obligatorio; unit (km, viaje…), costUnitPrice, saleUnitPrice, igicRate, description" },
+  { tool: "supplier", api: "suppliers", label: "proveedor", output: catalogSupplierOutput, hint: "name obligatorio; taxId (NIF/CIF)" },
+  { tool: "text_template", api: "text-templates", label: "texto habitual", output: catalogTextTemplateOutput, hint: "title y body obligatorios; alwaysInclude (incluir por defecto)" },
 ] as const;
 const catalogKindSchema = z.enum(["materials", "employees", "travels", "suppliers", "text-templates"]);
 
 const catalogTools: GeneratorTool[] = CATALOG_KINDS.flatMap((kind) => {
-  const full = strictSchema(catalogMutationSchema(kind.api)) as z.ZodObject;
-  const partial = strictSchema(catalogMutationSchema(kind.api, true)) as z.ZodObject;
+  // `metadata` de materiales es un objeto libre de uso interno: no forma parte del input MCP.
+  const closed = (schema: z.ZodObject) => ("metadata" in schema.shape ? schema.omit({ metadata: true }) : schema);
+  const full = closed(strictSchema(catalogMutationSchema(kind.api)) as z.ZodObject);
+  const partial = closed(strictSchema(catalogMutationSchema(kind.api, true)) as z.ZodObject);
   return [
     {
       name: `create_${kind.tool}`,
       description: `Crea un ${kind.label} en el catálogo solo cuando el usuario lo pide. Campos: ${kind.hint}. Importes como string decimal con punto ("12.50"). Antes busca con get_catalog para no duplicar. Devuelve el registro creado.`,
-      scopes: ["quotes:write"], input: full, output: catalogRecordOutput, readOnly: false,
+      scopes: ["quotes:write"], input: full, output: kind.output, readOnly: false,
       run: (api, p, a) => api.request("POST", `/catalogs/${kind.api}`, p, a),
     },
     {
       name: `update_${kind.tool}`,
       description: `Modifica un ${kind.label} existente (id de get_catalog). Envía solo los campos a cambiar: ${kind.hint}. Los presupuestos ya creados conservan sus valores (snapshots).`,
-      scopes: ["quotes:write"], input: partial.extend({ id: z.uuid() }), output: catalogRecordOutput, readOnly: false,
+      scopes: ["quotes:write"], input: partial.extend({ id: z.uuid() }), output: kind.output, readOnly: false,
       run: (api, p, a) => api.request("PATCH", `/catalogs/${kind.api}/${pathId(a.id)}`, p, without(a, "id")),
     },
   ];
@@ -165,7 +167,7 @@ export const generatorTools: GeneratorTool[] = [
   ...holdedEstimateTools,
   { name: "sync_quote_to_holded", description: "Única forma de crear o actualizar un Estimate en Holded: envía un presupuesto LOCAL del Generador ya revisado. El backend crea el Estimate la primera vez y después actualiza siempre el mismo (idempotente, sin duplicados). Requiere petición explícita del usuario y la revision actual. Tras un error consulta get_holded_status y get_quote antes de volver a llamar una sola vez.", scopes: ["quotes:write", "holded:write"], input: z.strictObject(guard), output: quoteOutput, readOnly: false, run: (api, p, a) => api.request("POST", `/quotes/${pathId(a.quoteId)}/holded`, p, without(a, "quoteId")) },
   { name: "get_quote_review", description: "Consulta validación backend de presupuesto: listo, bloqueos y datos pendientes. Resuelve issues antes de exportar.", scopes: ["quotes:read"], input: z.strictObject(quoteId), output: reviewOutput, readOnly: true, run: (api, p, a) => api.request("GET", `/quotes/${pathId(a.quoteId)}/review`, p) },
-  { name: "get_catalog", description: "Lee catálogo existente para elegir materiales, empleados, suplementos, viajes, textos o proveedores. No modifica catálogo.", scopes: ["quotes:read"], input: z.strictObject({ kind: z.enum(["materials", "employees", "supplements", "travels", "text-templates", "suppliers"]), employeeId: z.uuid().optional() }), output: z.array(z.record(z.string(), z.json())), readOnly: true, run: (api, p, a) => api.request("GET", `/catalogs/${String(a.kind)}${a.employeeId ? `?employeeId=${pathId(a.employeeId)}` : ""}`, p) },
+  { name: "get_catalog", description: "Lee catálogo existente para elegir materiales, empleados, suplementos, viajes, textos o proveedores. No modifica catálogo.", scopes: ["quotes:read"], input: z.strictObject({ kind: z.enum(["materials", "employees", "supplements", "travels", "text-templates", "suppliers"]), employeeId: z.uuid().optional() }), output: z.array(catalogRecordOutput), readOnly: true, run: (api, p, a) => api.request("GET", `/catalogs/${String(a.kind)}${a.employeeId ? `?employeeId=${pathId(a.employeeId)}` : ""}`, p) },
   ...catalogTools,
   ...catalogLifecycleTools,
   ...materialImportTools,

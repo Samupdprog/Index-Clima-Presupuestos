@@ -14,7 +14,7 @@ Scopes: `clients:read`, `clients:write`, `quotes:read`, `quotes:write`, `holded:
 
 ## Contratos
 
-Entradas JSON Schema cerradas. Dinero como decimal string. Escrituras sobre entidades existentes requieren `expectedRevision`; conflictos 409 se devuelven como error tipado y obligan a releer. Se publican schemas de salida y errores estructurados, propagando códigos de API/Holded sin secretos ni cuerpos de error arbitrarios. No hay reintentos automáticos de mutaciones ambiguas.
+Entradas JSON Schema cerradas. Cada herramienta publica un `title` legible y sus schemas de entrada y salida son explícitos: sin `z.record`, `z.json()` ni objetos libres, porque el action discovery de ChatGPT rechaza `propertyNames`, `additionalProperties: {}` y `$ref` recursivos (lo comprueba `apps/mcp/src/descriptor.test.ts`). Dinero como decimal string. Escrituras sobre entidades existentes requieren `expectedRevision`; conflictos 409 se devuelven como error tipado y obligan a releer. Se publican schemas de salida y errores estructurados, propagando códigos de API/Holded sin secretos ni cuerpos de error arbitrarios. No hay reintentos automáticos de mutaciones ambiguas.
 
 Líneas compuestas conservan lista ordenada de descuentos y entradas de trabajo. Ajuste público `operation` se traduce al `mode` contractual de la API sin cálculo. Preview y apply se ejecutan en backend. El review también procede del backend. Ninguna herramienta modifica catálogo como efecto secundario ni expone reset.
 
