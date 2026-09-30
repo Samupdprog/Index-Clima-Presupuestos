@@ -87,10 +87,13 @@ docker compose exec -T mcp node --input-type=module < scripts/live-mcp-smoke.mjs
 ## Actualización
 
 ```bash
-git pull --ff-only
 ./scripts/backup-postgres.sh
-./scripts/deploy.sh
+git pull --ff-only
+nohup ./scripts/deploy.sh > "$HOME/deploy-$(date +%Y%m%d-%H%M%S).log" 2>&1 &
+tail -f "$(ls -t "$HOME"/deploy-*.log | head -1)"
 ```
+
+La construcción de imágenes tarda varios minutos. Lanzado con `nohup … &`, el despliegue continúa aunque se corte la sesión SSH (con `deploy.sh` en primer plano, un corte lo interrumpe a mitad del build: no rompe nada, los contenedores anteriores siguen funcionando, pero hay que repetirlo). `Ctrl+C` en el `tail` solo deja de mostrar el log. Termina bien cuando el log acaba con la tabla de `docker compose ps` y todos los servicios `healthy`.
 
 Las migraciones pendientes se aplican solas antes de arrancar la API. También se pueden lanzar a mano con `docker compose run --rm migrate`.
 
