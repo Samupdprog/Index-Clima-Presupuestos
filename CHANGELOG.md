@@ -2,6 +2,19 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); versiones [SemVer](https://semver.org/lang/es/).
 
+## [1.2.0] — 2026-09-30
+
+### Añadido
+
+- Importar materiales desde Excel explica la estructura del fichero (columnas, qué poner, ejemplos y nombres alternativos) y ofrece una **plantilla .xlsx** descargable con ejemplos y una hoja de instrucciones.
+- Tras elegir el fichero se muestran las **columnas detectadas** (con aviso si faltan coste, precio de venta o IGIC) y **cómo se ha leído** cada fila antes de comparar con el catálogo. Los materiales nuevos muestran todos sus datos: coste, venta, IGIC, unidad, proveedor y código.
+
+### Corregido
+
+- Muchas más cabeceras reconocidas («Precio de coste (€)», «PVP cliente», «% IGIC», «Artículo», «Referencia»…) y detección de la fila de cabeceras aunque haya títulos encima: antes una cabecera distinta se ignoraba sin avisar y solo se importaba el nombre.
+- IGIC con formato de porcentaje en Excel (0,07 → 7 %) y validación de los tipos admitidos (0, 3, 7, 15) también en el servidor.
+- Una celda vacía de Unidad o IGIC ya no sobrescribe el material existente con «ud» y 7 %: conserva el valor actual (los materiales nuevos siguen usando ud y 7 %).
+
 ## [1.1.2] — 2026-09-30
 
 ### Corregido

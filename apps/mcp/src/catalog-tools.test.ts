@@ -79,7 +79,7 @@ describe("catalog tools", () => {
     const rows = [{ name: "Tubo", supplierCode: "T-1", supplierUnitPrice: "6" }];
     const preview = await callGeneratorTool(tool("preview_material_import"), api, reader, { rows });
     expect(preview.structuredContent).toMatchObject({ ok: true, data: { summary: { updated: 1 } } });
-    expect(api.request).toHaveBeenLastCalledWith("POST", "/catalogs/materials/import/preview", reader, { rows: [{ ...rows[0], unit: "ud", igicRate: "7" }] });
+    expect(api.request).toHaveBeenLastCalledWith("POST", "/catalogs/materials/import/preview", reader, { rows });
     expect((await callGeneratorTool(tool("apply_material_import"), api, reader, { rows, planHash: plan.planHash })).structuredContent.error).toMatchObject({ code: "forbidden" });
     expect((await callGeneratorTool(tool("apply_material_import"), api, writer, { rows })).structuredContent.ok).toBe(false);
     await callGeneratorTool(tool("apply_material_import"), api, writer, { rows, planHash: plan.planHash });

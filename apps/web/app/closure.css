@@ -282,3 +282,207 @@ input[aria-invalid="true"] {
   text-align: left;
   cursor: pointer;
 }
+
+/* Importar materiales desde Excel: guía de estructura, columnas detectadas y lectura. */
+.import-section-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.import-section-title small {
+  color: var(--foreground-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.import-guide {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.import-guide-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.import-guide-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.import-guide-head .field-hint {
+  margin: 0;
+}
+
+.import-guide-head .button {
+  flex: 0 0 auto;
+}
+
+.import-guide-table {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.import-guide-table .data-table td,
+.import-guide-table .data-table th {
+  padding: 8px 11px;
+  vertical-align: top;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.import-guide-table td:first-child {
+  min-width: 150px;
+}
+
+.import-guide-table td:first-child small {
+  display: block;
+  margin-top: 2px;
+  color: var(--foreground-muted);
+  font-size: 10.5px;
+}
+
+.import-guide-table .badge {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.import-example {
+  color: var(--foreground-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.import-rules {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--foreground-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.import-rules strong {
+  color: var(--foreground);
+}
+
+.import-guide-toggle {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--surface-subtle);
+}
+
+.import-guide-toggle > summary {
+  cursor: pointer;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.import-guide-toggle[open] > summary {
+  margin-bottom: 12px;
+}
+
+.import-columns {
+  display: grid;
+  gap: 8px;
+}
+
+.import-columns ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-columns li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--foreground-muted);
+}
+
+.import-columns li svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+}
+
+.import-columns li > span {
+  display: grid;
+  min-width: 0;
+}
+
+.import-columns li strong {
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+.import-columns li small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.import-columns li[data-found] {
+  border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+  background: var(--success-soft);
+}
+
+.import-columns li[data-found] svg {
+  color: var(--success);
+}
+
+.import-columns li[data-important] {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: var(--warning-soft);
+}
+
+.import-columns li[data-important] svg {
+  color: var(--warning);
+}
+
+.import-empty {
+  color: var(--foreground-soft);
+}
+
+.excel-preview .data-table .numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .import-guide-head {
+    flex-direction: column;
+  }
+
+  .import-guide-head .button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .import-guide-table td:first-child {
+    min-width: 120px;
+  }
+}

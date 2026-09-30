@@ -24,6 +24,13 @@ describe("material import plan", () => {
     const plan = planMaterialImport(catalog, [row({ name: "Soporte pared", unit: "ud" })]);
     expect(plan.items[0]).toMatchObject({ action: "update", materialId: "m3", changes: [{ field: "active", before: false, after: true }] });
   });
+  it("does not overwrite unit or IGIC when those cells are empty, and defaults them for new materials", () => {
+    const plan = planMaterialImport(catalog, [{ name: "Split 3,5 kW", supplierCode: "SE-200", supplierUnitPrice: "310" }, { name: "Válvula nueva", supplierUnitPrice: "4.5", saleUnitPrice: "9", igicRate: "3" }, { name: "Racor nuevo" }]);
+    expect(plan.items[0]).toMatchObject({ action: "update", changes: [{ field: "supplierUnitPrice", before: "300.000000", after: "310" }] });
+    const created = (index: number) => Object.fromEntries(plan.items[index]!.changes.map((change) => [change.field, change.after]));
+    expect(created(1)).toEqual({ name: "Válvula nueva", unit: "ud", igicRate: "3", supplierUnitPrice: "4.5", saleUnitPrice: "9" });
+    expect(created(2)).toEqual({ name: "Racor nuevo", unit: "ud", igicRate: "7" });
+  });
   it("flags duplicated rows and ambiguous matches instead of guessing", () => {
     const twins = [...catalog, { ...base, id: "m4" }];
     const plan = planMaterialImport(twins, [row({ supplierCode: "SE-100" }), row({ name: "Otro", supplierCode: "se-200 " }), row({ name: "Otro", supplierCode: "SE-200" })]);

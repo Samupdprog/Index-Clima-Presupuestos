@@ -55,7 +55,10 @@ function canonicalDecimal(value: string | null | undefined) {
 
 /** Valores de la fila que cambian algo; una celda vacía conserva el valor actual. */
 function rowValues(row: MaterialImportRow): Partial<Record<MaterialField, string>> {
-  const values: Partial<Record<MaterialField, string>> = { name: row.name.trim(), unit: row.unit.trim() || "ud", igicRate: canonicalDecimal(row.igicRate) ?? "7" };
+  const values: Partial<Record<MaterialField, string>> = { name: row.name.trim() };
+  if (row.unit?.trim()) values.unit = row.unit.trim();
+  const igicRate = canonicalDecimal(row.igicRate);
+  if (igicRate !== null) values.igicRate = igicRate;
   if (row.supplierNameSnapshot?.trim()) values.supplierNameSnapshot = row.supplierNameSnapshot.trim();
   if (row.supplierCode?.trim()) values.supplierCode = row.supplierCode.trim();
   const cost = canonicalDecimal(row.supplierUnitPrice);
@@ -99,7 +102,11 @@ export function planMaterialImport(existing: CatalogMaterialSnapshot[], rows: Ma
     const matches = candidates(existing, row);
     if (matches.length > 1) return { ...base, action: "invalid", materialId: null, changes: [], reason: "ambiguous_match" };
     const current = matches[0];
-    if (!current) return { ...base, action: "create", materialId: null, changes: (Object.entries(values) as Array<[MaterialField, string]>).map(([field, after]) => ({ field, before: null, after })) };
+    if (!current) {
+      // Material nuevo: unidad e IGIC por defecto si el fichero no los trae.
+      const created = { unit: "ud", igicRate: "7", ...values };
+      return { ...base, action: "create", materialId: null, changes: (Object.entries(created) as Array<[MaterialField, string]>).map(([field, after]) => ({ field, before: null, after })) };
+    }
     const changes: MaterialChange[] = [];
     for (const [field, after] of Object.entries(values) as Array<[MaterialField, string]>) {
       const before = current[field as keyof CatalogMaterialSnapshot] as string | null;

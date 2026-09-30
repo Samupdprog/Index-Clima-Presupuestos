@@ -24,10 +24,12 @@ export const materialImportRowSchema = z.object({
   name: z.string().trim().min(1).max(250),
   supplierNameSnapshot: optionalCatalogText,
   supplierCode: optionalCatalogText,
-  unit: z.string().trim().min(1).max(30).default("ud"),
+  // Unidad e IGIC vacíos conservan el valor actual; en materiales nuevos se usa "ud" y 7 %.
+  unit: z.string().trim().min(1).max(30).optional(),
   supplierUnitPrice: optionalCatalogDecimal,
   saleUnitPrice: optionalCatalogDecimal,
-  igicRate: z.string().trim().regex(/^\d+(?:[.,]\d+)?$/).default("7"),
+  /** Solo los tipos de IGIC admitidos por el catálogo: 0, 3, 7 o 15 (admite "7", "7.00" o "7,0"). */
+  igicRate: z.string().trim().regex(/^(?:0|3|7|15)(?:[.,]0+)?$/, "igic_rate_not_allowed").optional(),
   description: z.string().trim().max(2000).optional(),
 });
 
