@@ -54,6 +54,7 @@ import {
   updateClientRequestSchema,
   quoteCommandSchema,
   catalogMutationSchema,
+  deleteCatalogMaterialRequestSchema,
   materialImportRequestSchema,
   previewPriceAdjustmentRequestSchema,
   holdedIdSchema,
@@ -539,6 +540,12 @@ const server = createServer(async (req, res) => {
       const planHash = body && typeof body === "object" && typeof (body as { planHash?: unknown }).planHash === "string" ? (body as { planHash: string }).planHash : "";
       if (!/^[0-9a-f]{16}$/.test(planHash)) return sendJson(res, 400, { error: "invalid_input" });
       return sendJson(res, 200, await applyMaterialImport(importer)(installationId!, parsed.data.rows, planHash));
+    }
+    // Borrado definitivo de un material (solo materiales; el resto del catálogo se archiva).
+    if (path[0] === "catalogs" && path[1] === "materials" && path.length === 3 && req.method === "DELETE") {
+      if (!deleteCatalogMaterialRequestSchema.safeParse(await readBody(req)).success) return sendJson(res, 400, { error: "confirmation_required" });
+      const deleted = await catalog!.deleteMaterial(path[2]!, installationId!);
+      return deleted ? sendJson(res, 200, deleted) : sendJson(res, 404, { error: "catalog_not_found" });
     }
     if (path[0] === "catalogs" && path.length === 3 && req.method === "PATCH") {
       const parsed = catalogMutationSchema(path[1]!, true).safeParse(await readBody(req));

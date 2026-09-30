@@ -99,6 +99,22 @@ describe("functional closure against PostgreSQL", () => {
     expect(await edit({ description: "TEST tubo cobre 3/8" })).toEqual({ ...base, description: "TEST tubo cobre 3/8", quantity: 4, cost: "60.00", sale: "120.00" });
     expect(await edit({ igicRate: "7" })).toEqual({ ...base, description: "TEST tubo cobre 3/8", igic: 7, quantity: 4, cost: "60.00", sale: "120.00" });
   });
+  it("deletes a catalog material without touching the quotes that used it", async () => {
+    const catalog = createCatalogRepository(db);
+    const [material] = await catalog.createMaterial({ installationId, name: "TEST tubo duplicado", supplierUnitPrice: "10", saleUnitPrice: "13.8" });
+    const draft = await quotes.create({ installationId, title: "TEST borrar material" });
+    await workflow.createLineWithDetails({ installationId, quoteId: draft.id, expectedRevision: draft.revision, lineType: "material", catalogMaterialId: material!.id, line: { description: "TEST tubo duplicado", unit: "m", quantity: "2", igicRate: "7", saleRule: "unit_price", saleRuleValue: "13.8", directUnitCost: "10" }, discounts: [], laborEntries: [] });
+    const before = (await quotes.getQuoteById(installationId, draft.id))!;
+    expect(await catalog.deleteMaterial(material!.id, otherId)).toBeNull();
+    expect(await catalog.deleteMaterial(material!.id, installationId)).toEqual({ deleted: true, id: material!.id, name: "TEST tubo duplicado", usedInQuoteLines: 1 });
+    expect((await catalog.listMaterials(installationId)).some((item) => item.id === material!.id)).toBe(false);
+    expect(await catalog.deleteMaterial(material!.id, installationId)).toBeNull();
+    const after = (await quotes.getQuoteById(installationId, draft.id))!;
+    expect(after.lines).toEqual(before.lines);
+    expect(after.calculation.saleWithoutTax).toBe(before.calculation.saleWithoutTax);
+    const events = await db.select().from(auditEvents).where(eq(auditEvents.entityId, material!.id));
+    expect(events.map((event) => event.action)).toEqual(["catalog.material.deleted"]);
+  });
   it("changes the quote number, rejecting duplicates regardless of case", async () => {
     const other = await quotes.create({ installationId, title: "TEST otro número" });
     const current = (await quotes.getQuoteById(installationId, quoteId))!;

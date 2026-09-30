@@ -33,6 +33,9 @@ export const materialImportRowSchema = z.object({
   description: z.string().trim().max(2000).optional(),
 });
 
+/** Borrado definitivo de un material: exige confirmación explícita (irreversible). */
+export const deleteCatalogMaterialRequestSchema = z.strictObject({ confirm: z.literal(true) });
+
 export const materialImportRequestSchema = z.object({
   rows: z.array(materialImportRowSchema).min(1).max(2000),
 });

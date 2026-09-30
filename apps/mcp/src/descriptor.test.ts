@@ -43,7 +43,7 @@ describe("tools/list descriptor for ChatGPT action discovery", () => {
   it("publishes every tool with a human title and closed, non-recursive schemas", async () => {
     const tools = await listTools();
     expect(tools).toHaveLength(generatorTools.length + 1);
-    expect(tools).toHaveLength(52);
+    expect(tools).toHaveLength(53);
     const problems = tools.flatMap((tool) => [
       ...(typeof tool.title === "string" && tool.title.trim() && tool.title !== tool.name ? [] : [`${tool.name}: missing title`]),
       ...incompatibleNodes(tool.inputSchema).map((node) => `${tool.name} input ${node}`),

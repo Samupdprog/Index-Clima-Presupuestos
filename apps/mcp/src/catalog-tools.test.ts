@@ -65,6 +65,18 @@ describe("catalog tools", () => {
     const archived = await callGeneratorTool(tool("archive_catalog_item"), { request: vi.fn().mockResolvedValue({ ...rows.travels, active: false }) }, writer, { kind: "travels", id: itemId });
     expect(archived.structuredContent.data).toMatchObject({ active: false, costUnitPrice: "10.000000" });
   });
+  it("deletes a material only with an explicit confirm: true", async () => {
+    const api: GeneratorApi = { request: vi.fn().mockResolvedValue({ deleted: true, id: itemId, name: "Tubo duplicado", usedInQuoteLines: 2 }) };
+    for (const args of [{ id: itemId }, { id: itemId, confirm: false }, { id: itemId, confirm: "true" }]) {
+      expect((await callGeneratorTool(tool("delete_material"), api, writer, args)).structuredContent.ok).toBe(false);
+    }
+    expect((await callGeneratorTool(tool("delete_material"), api, reader, { id: itemId, confirm: true })).structuredContent.error).toMatchObject({ code: "forbidden" });
+    expect(api.request).not.toHaveBeenCalled();
+    const done = await callGeneratorTool(tool("delete_material"), api, writer, { id: itemId, confirm: true });
+    expect(done.structuredContent).toMatchObject({ ok: true, data: { deleted: true, usedInQuoteLines: 2 } });
+    expect(api.request).toHaveBeenCalledWith("DELETE", `/catalogs/materials/${itemId}`, writer, { confirm: true });
+    expect(tool("delete_material")).toMatchObject({ destructive: true, readOnly: false });
+  });
   it("does not accept free-form metadata from the AI", async () => {
     const api: GeneratorApi = { request: vi.fn() };
     for (const name of ["create_material", "update_material"]) {

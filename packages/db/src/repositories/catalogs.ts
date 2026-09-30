@@ -1,7 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import type { Database } from "../client.js";
 import { catalogMaterials, catalogTravels, employeeSupplements, employees, suppliers, textTemplates } from "../schema/common.js";
 import { auditEvents } from "../schema/operations.js";
+import { quoteLines } from "../schema/quotes.js";
 import { auditActor } from "../audit-context.js";
 
 export function createCatalogRepository(db: Database) {
@@ -40,6 +41,20 @@ export function createCatalogRepository(db: Database) {
     updateSupplement: async (id: string, installationId: string, changes: Partial<typeof employeeSupplements.$inferInsert>) => { await validateReferences(installationId, changes); return db.update(employeeSupplements).set(editable(changes)).where(and(eq(employeeSupplements.id, id), eq(employeeSupplements.installationId, installationId))).returning(); },
     updateTravel: (id: string, installationId: string, changes: Partial<typeof catalogTravels.$inferInsert>) => db.update(catalogTravels).set({ ...editable(changes), updatedAt: new Date() }).where(and(eq(catalogTravels.id, id), eq(catalogTravels.installationId, installationId))).returning(),
     updateTextTemplate: (id: string, installationId: string, changes: Partial<typeof textTemplates.$inferInsert>) => db.update(textTemplates).set({ ...editable(changes), updatedAt: new Date() }).where(and(eq(textTemplates.id, id), eq(textTemplates.installationId, installationId))).returning(),
+    /**
+     * Borrado definitivo de un material del catálogo. Las líneas de presupuesto no dependen del
+     * catálogo (guardan su propia copia de nombre, coste y precio), así que ningún presupuesto cambia.
+     * Devuelve `null` si el material no existe en esta instalación.
+     */
+    deleteMaterial: (id: string, installationId: string) => db.transaction(async (tx) => {
+      const [material] = await tx.select().from(catalogMaterials).where(and(eq(catalogMaterials.id, id), eq(catalogMaterials.installationId, installationId))).limit(1);
+      if (!material) return null;
+      const [usage] = await tx.select({ lines: count() }).from(quoteLines).where(eq(quoteLines.catalogMaterialId, id));
+      await tx.delete(catalogMaterials).where(and(eq(catalogMaterials.id, id), eq(catalogMaterials.installationId, installationId)));
+      const { installationId: _installation, ...snapshot } = material;
+      await tx.insert(auditEvents).values({ installationId, ...auditActor(), action: "catalog.material.deleted", entityType: "catalog_materials", entityId: id, before: snapshot, after: { usedInQuoteLines: usage?.lines ?? 0 } });
+      return { deleted: true as const, id, name: material.name, usedInQuoteLines: usage?.lines ?? 0 };
+    }),
     updateSupplier: (id: string, installationId: string, changes: Partial<typeof suppliers.$inferInsert>) => db.update(suppliers).set({ ...editable(changes), updatedAt: new Date() }).where(and(eq(suppliers.id, id), eq(suppliers.installationId, installationId))).returning(),
   };
 }

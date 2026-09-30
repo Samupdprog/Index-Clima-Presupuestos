@@ -2,6 +2,13 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); versiones [SemVer](https://semver.org/lang/es/).
 
+## [1.3.0] — 2026-09-30
+
+### Añadido
+
+- Eliminar materiales del catálogo de forma definitiva (web: menú del material → «Eliminar», con confirmación; MCP: `delete_material` con `confirm: true`, herramienta destructiva). Pensado para duplicados o errores; «Desactivar» sigue disponible para dejar de ofrecer un material sin borrarlo.
+- Los presupuestos que usaban el material no cambian: cada línea guarda su propia copia de nombre, coste y precio (no hay clave foránea). La respuesta indica en cuántas líneas se usaba y el borrado queda auditado (`catalog.material.deleted`, con los datos del material).
+
 ## [1.2.0] — 2026-09-30
 
 ### Añadido

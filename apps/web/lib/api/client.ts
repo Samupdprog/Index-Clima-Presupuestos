@@ -99,6 +99,7 @@ export const api = {
   createCatalog: <T extends CatalogRecord>(kind: CatalogKind, data: Record<string, unknown>) => request<T>(`/catalogs/${kind}`, { method: "POST", body: JSON.stringify(data) }),
   updateCatalog: <T extends CatalogRecord>(kind: CatalogKind, id: string, data: Record<string, unknown>) => request<T>(`/catalogs/${kind}/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   archiveCatalog: <T extends CatalogRecord>(kind: CatalogKind, id: string) => request<T>(`/catalogs/${kind}/${id}/archive`, { method: "POST", body: "{}" }),
+  deleteMaterial: (id: string) => request<{ deleted: true; id: string; name: string; usedInQuoteLines: number }>(`/catalogs/materials/${id}`, { method: "DELETE", body: JSON.stringify({ confirm: true }) }),
   previewMaterialImport: (rows: MaterialImportRow[]) => request<MaterialImportPlan>("/catalogs/materials/import/preview", { method: "POST", body: JSON.stringify({ rows }) }),
   applyMaterialImport: (rows: MaterialImportRow[], planHash: string) => request<MaterialImportPlan>("/catalogs/materials/import/apply", { method: "POST", body: JSON.stringify({ rows, planHash }) }),
 };
